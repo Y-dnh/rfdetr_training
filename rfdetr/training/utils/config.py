@@ -89,8 +89,10 @@ class AugmentationConfig:
     fliplr: float = 0.5
     flipud: float = 0.0
     
-    # Random erasing
+    # Random erasing (box-aware)
     erasing: float = 0.0
+    erasing_min_visible: float = 0.5   # Min ratio of box that must remain visible (0-1)
+    erasing_min_box_size: int = 20     # Min box dimension after erasing (pixels)
     
     # Image size
     imgsz: int = 640

@@ -151,6 +151,9 @@ class AugmentationPipeline:
                 p=cfg.erasing,
                 scale=(0.02, 0.33),
                 ratio=(0.3, 3.3),
+                min_visible_ratio=cfg.erasing_min_visible,
+                min_box_size=cfg.erasing_min_box_size,
+                box_aware=True,  # Enable box-aware erasing
             )
         
         # Common transforms (train and val)
