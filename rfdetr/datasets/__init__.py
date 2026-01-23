@@ -22,8 +22,12 @@ def get_coco_api_from_dataset(dataset):
     for _ in range(10):
         if isinstance(dataset, torch.utils.data.Subset):
             dataset = dataset.dataset
+    # Check for .coco attribute (works for CocoDetection and RFDETRDataset)
+    if hasattr(dataset, 'coco'):
+        return dataset.coco
     if isinstance(dataset, torchvision.datasets.CocoDetection):
         return dataset.coco
+    return None
 
 
 def build_dataset(image_set, args, resolution):

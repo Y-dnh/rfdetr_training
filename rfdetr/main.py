@@ -487,12 +487,24 @@ class Model:
         best_is_ema = best_map_ema_5095 > best_map_5095
 
         if utils.is_main_process():
-            if best_is_ema:
+            # Check if best checkpoints exist before copying
+            best_ema_exists = (output_dir / 'checkpoint_best_ema.pth').exists()
+            best_regular_exists = (output_dir / 'checkpoint_best_regular.pth').exists()
+            
+            if best_is_ema and best_ema_exists:
+                shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
+            elif best_regular_exists:
+                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+            elif best_ema_exists:
                 shutil.copy2(output_dir / 'checkpoint_best_ema.pth', output_dir / 'checkpoint_best_total.pth')
             else:
-                shutil.copy2(output_dir / 'checkpoint_best_regular.pth', output_dir / 'checkpoint_best_total.pth')
+                # No best checkpoint found, use the last checkpoint
+                if (output_dir / 'checkpoint.pth').exists():
+                    shutil.copy2(output_dir / 'checkpoint.pth', output_dir / 'checkpoint_best_total.pth')
+                    print("Warning: No best checkpoint found, using last checkpoint")
 
-            utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
+            if (output_dir / 'checkpoint_best_total.pth').exists():
+                utils.strip_checkpoint(output_dir / 'checkpoint_best_total.pth')
 
             best_map_5095 = max(best_map_5095, best_map_ema_5095)
             if best_is_ema:

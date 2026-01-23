@@ -180,3 +180,14 @@ rf-detr*
 output/*
 
 train_test.py
+
+# Virtual environment
+rfdetr_training_env/
+
+# Training runs and experiments
+runs/
+
+# Example outputs and visualizations
+example/
+
+test_dataset/
