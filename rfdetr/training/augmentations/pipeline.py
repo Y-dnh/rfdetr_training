@@ -107,6 +107,8 @@ class AugmentationPipeline:
                 dataset=self.dataset,
                 alpha=1.0,
                 p=cfg.cutmix,
+                min_visible_ratio=cfg.cutmix_min_visible,
+                min_box_size=cfg.cutmix_min_box_size,
             )
             
             self.hsv = RandomHSV(

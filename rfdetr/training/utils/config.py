@@ -66,8 +66,10 @@ class AugmentationConfig:
     # MixUp
     mixup: float = 0.0
     
-    # CutMix
+    # CutMix (box-aware)
     cutmix: float = 0.0
+    cutmix_min_visible: float = 0.3   # Min ratio of box that must remain visible
+    cutmix_min_box_size: int = 10     # Min box dimension after clipping
     
     # HSV
     hsv_h: float = 0.015
