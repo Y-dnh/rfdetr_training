@@ -54,7 +54,7 @@ class RFDETRValidator:
         model_path: Optional[str] = None,
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.5,
-        imgsz: int = 640,
+        imgsz: Optional[int] = None,  # Auto-detect from checkpoint
         batch_size: int = 16,
         workers: int = 8,
         device: str = 'cuda',
@@ -67,7 +67,7 @@ class RFDETRValidator:
             model_path: Path to model weights.
             conf_threshold: Confidence threshold for predictions.
             iou_threshold: IoU threshold for NMS.
-            imgsz: Image size for validation.
+            imgsz: Image size for validation. If None, auto-detects from checkpoint.
             batch_size: Batch size.
             workers: Number of data loading workers.
             device: Device to use.
@@ -76,7 +76,8 @@ class RFDETRValidator:
         self.model_path = model_path
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
-        self.imgsz = imgsz
+        self._imgsz_override = imgsz  # User override
+        self.imgsz = imgsz or 560  # Default, will be updated from checkpoint
         self.batch_size = batch_size
         self.workers = workers
         self.device = device
@@ -84,6 +85,39 @@ class RFDETRValidator:
         
         self.model = None
         self.class_names = None
+        
+        # Auto-detect imgsz from checkpoint if not specified
+        if model_path and imgsz is None:
+            self._detect_imgsz_from_checkpoint()
+    
+    def _detect_imgsz_from_checkpoint(self):
+        """Auto-detect image size from checkpoint config."""
+        if not self.model_path or not Path(self.model_path).exists():
+            return
+        
+        try:
+            checkpoint = torch.load(self.model_path, map_location='cpu')
+            
+            # Try to get from augmentation_config
+            if 'augmentation_config' in checkpoint:
+                aug_config = checkpoint['augmentation_config']
+                if isinstance(aug_config, dict) and 'imgsz' in aug_config:
+                    self.imgsz = aug_config['imgsz']
+                    print(f"[Validator] Auto-detected imgsz={self.imgsz} from checkpoint")
+                    return
+            
+            # Try to get from model_config (model_size -> resolution)
+            if 'model_config' in checkpoint:
+                model_config = checkpoint['model_config']
+                if isinstance(model_config, dict) and 'model_size' in model_config:
+                    size_to_resolution = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 560}
+                    model_size = model_config['model_size']
+                    self.imgsz = size_to_resolution.get(model_size, 560)
+                    print(f"[Validator] Auto-detected imgsz={self.imgsz} from model_size={model_size}")
+                    return
+                    
+        except Exception as e:
+            print(f"[Validator] Could not auto-detect imgsz: {e}")
     
     def _load_model(self) -> nn.Module:
         """Load the model from checkpoint."""

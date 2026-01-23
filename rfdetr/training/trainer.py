@@ -295,6 +295,17 @@ class RFDETRTrainer:
         
         return optimizer
     
+    def _get_model_resolution(self) -> int:
+        """Get the expected resolution for the current model size."""
+        size_to_resolution = {
+            'n': 384,   # Nano
+            's': 512,   # Small
+            'm': 576,   # Medium
+            'b': 560,   # Base
+            'l': 560,   # Large
+        }
+        return size_to_resolution.get(self.model_config.model_size, 560)
+    
     def _setup_scheduler(self, optimizer: torch.optim.Optimizer, num_training_steps: int):
         """Create learning rate scheduler."""
         warmup_steps = int(num_training_steps * 0.1)
@@ -322,14 +333,23 @@ class RFDETRTrainer:
         # Setup loggers
         self.training_logger = TrainingLogger(self.save_dir)
         self.metrics_logger = MetricsLogger(self.save_dir)
-        self.aug_logger = AugmentationLogger(self.save_dir / 'logs')
+        self.aug_logger = AugmentationLogger(self.save_dir)
         
         self.training_logger.info(f"Starting training in {self.save_dir}")
         self.training_logger.info(f"Seed: {self.seed}")
         self.training_logger.info(f"Batch size: {self.training_config.batch_size}, Grid size: {self.grid_size}x{self.grid_size}")
         
+        # Get model resolution and sync with augmentation config
+        model_resolution = self._get_model_resolution()
+        if self.augmentation_config.imgsz != model_resolution:
+            self.training_logger.info(f"Syncing imgsz: {self.augmentation_config.imgsz} -> {model_resolution} (model resolution)")
+            # Create new config with correct resolution
+            from dataclasses import replace
+            self.augmentation_config = replace(self.augmentation_config, imgsz=model_resolution)
+        
         # Log augmentation config
         self.training_logger.info("Augmentation config:")
+        self.training_logger.info(f"  Image size: {self.augmentation_config.imgsz}")
         self.training_logger.info(f"  Mosaic: {self.augmentation_config.mosaic}")
         self.training_logger.info(f"  MixUp: {self.augmentation_config.mixup}")
         self.training_logger.info(f"  HSV: h={self.augmentation_config.hsv_h}, s={self.augmentation_config.hsv_s}, v={self.augmentation_config.hsv_v}")
@@ -527,7 +547,7 @@ class RFDETRTrainer:
         
         # Save batches
         saved_batches = 0
-        max_batches_to_save = 3
+        max_batches_to_save = self.training_config.vis_batches
         
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(self.val_loader):
@@ -597,14 +617,19 @@ class RFDETRTrainer:
         self.training_logger.info("Saving first training batches with augmentations...")
         
         try:
+            import json
             from PIL import Image, ImageDraw
             
             mean = np.array([0.485, 0.456, 0.406])
             std = np.array([0.229, 0.224, 0.225])
             batch_size = self.training_config.batch_size
             
-            for batch_idx in range(3):
+            all_batches_aug_logs = []  # Collect augmentation logs for all batches
+            num_vis_batches = self.training_config.vis_batches
+            
+            for batch_idx in range(num_vis_batches):
                 images_list = []
+                batch_aug_logs = []  # Collect augmentation logs for this batch
                 
                 for i in range(batch_size):
                     idx = batch_idx * batch_size + i
@@ -614,9 +639,13 @@ class RFDETRTrainer:
                     # Get image with augmentations
                     img_tensor, target, aug_log = self.train_dataset[idx]
                     
-                    # Log augmentations
+                    # Collect augmentation log for this image
                     if aug_log:
-                        self.aug_logger.log(aug_log)
+                        batch_aug_logs.append({
+                            'grid_position': i,
+                            'image_name': aug_log.get('image_name', f'image_{idx}'),
+                            'augmentations': aug_log.get('applied', [])
+                        })
                     
                     # Denormalize
                     img_np = img_tensor.numpy().transpose(1, 2, 0)
@@ -656,9 +685,40 @@ class RFDETRTrainer:
                 # Create mosaic with dynamic grid size
                 mosaic = self._create_mosaic(images_list, grid_size=self.grid_size)
                 
+                # Save visualization
                 save_path = self.save_dir / f'train_batch{batch_idx}.jpg'
                 Image.fromarray(mosaic).save(save_path, quality=95)
                 self.training_logger.info(f"Saved {save_path}")
+                
+                # Collect batch aug logs
+                if batch_aug_logs:
+                    all_batches_aug_logs.append({
+                        'batch_idx': batch_idx,
+                        'batch_file': f'train_batch{batch_idx}.jpg',
+                        'grid_size': self.grid_size,
+                        'images': batch_aug_logs
+                    })
+            
+            # Save single augmentation log file for all batches
+            if all_batches_aug_logs:
+                aug_log_path = self.save_dir / 'train_batches_aug.json'
+                
+                # Convert numpy types to Python types for JSON serialization
+                def json_converter(obj):
+                    if isinstance(obj, np.floating):
+                        return float(obj)
+                    if isinstance(obj, np.integer):
+                        return int(obj)
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+                
+                with open(aug_log_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'description': 'Augmentation log for visualized training batches',
+                        'batches': all_batches_aug_logs
+                    }, f, indent=2, ensure_ascii=False, default=json_converter)
+                self.training_logger.info(f"Saved augmentation log: {aug_log_path}")
                 
         except Exception as e:
             self.training_logger.warning(f"Failed to save training batches: {e}")
@@ -670,6 +730,7 @@ class RFDETRTrainer:
         self.training_logger.info("Saving last training batches...")
         
         try:
+            import json
             from PIL import Image, ImageDraw
             
             mean = np.array([0.485, 0.456, 0.406])
@@ -677,17 +738,29 @@ class RFDETRTrainer:
             batch_size = self.training_config.batch_size
             
             total_images = len(self.train_dataset)
-            start_idx = max(0, total_images - batch_size * 3)
+            num_vis_batches = self.training_config.vis_batches
+            start_idx = max(0, total_images - batch_size * num_vis_batches)
             
-            for batch_idx in range(3):
+            all_batches_aug_logs = []  # Collect augmentation logs for all last batches
+            
+            for batch_idx in range(num_vis_batches):
                 images_list = []
+                batch_aug_logs = []  # Collect augmentation logs for this batch
                 
                 for i in range(batch_size):
                     idx = start_idx + batch_idx * batch_size + i
                     if idx >= total_images:
                         break
                     
-                    img_tensor, target, _ = self.train_dataset[idx]
+                    img_tensor, target, aug_log = self.train_dataset[idx]
+                    
+                    # Collect augmentation log for this image
+                    if aug_log:
+                        batch_aug_logs.append({
+                            'grid_position': i,
+                            'image_name': aug_log.get('image_name', f'image_{idx}'),
+                            'augmentations': aug_log.get('applied', [])
+                        })
                     
                     img_np = img_tensor.numpy().transpose(1, 2, 0)
                     img_np = img_np * std + mean
@@ -715,6 +788,42 @@ class RFDETRTrainer:
                     batch_name = (self.current_epoch * len(self.train_loader) + batch_idx)
                     save_path = self.save_dir / f'train_batch{batch_name}.jpg'
                     Image.fromarray(mosaic).save(save_path, quality=95)
+                    
+                    # Collect batch aug logs
+                    if batch_aug_logs:
+                        all_batches_aug_logs.append({
+                            'batch_idx': batch_name,
+                            'batch_file': f'train_batch{batch_name}.jpg',
+                            'grid_size': self.grid_size,
+                            'images': batch_aug_logs
+                        })
+            
+            # Append to existing augmentation log file
+            if all_batches_aug_logs:
+                aug_log_path = self.save_dir / 'train_batches_aug.json'
+                
+                # Load existing log if present
+                existing_data = {'description': 'Augmentation log for visualized training batches', 'batches': []}
+                if aug_log_path.exists():
+                    with open(aug_log_path, 'r', encoding='utf-8') as f:
+                        existing_data = json.load(f)
+                
+                # Append new batches
+                existing_data['batches'].extend(all_batches_aug_logs)
+                
+                # Convert numpy types to Python types for JSON serialization
+                def json_converter(obj):
+                    if isinstance(obj, np.floating):
+                        return float(obj)
+                    if isinstance(obj, np.integer):
+                        return int(obj)
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+                
+                # Save updated log
+                with open(aug_log_path, 'w', encoding='utf-8') as f:
+                    json.dump(existing_data, f, indent=2, ensure_ascii=False, default=json_converter)
                     
         except Exception as e:
             self.training_logger.warning(f"Failed to save last batches: {e}")
@@ -917,7 +1026,7 @@ class RFDETRTrainer:
         """Save augmentation log to JSON file."""
         try:
             self.aug_logger.save()
-            self.training_logger.info(f"Augmentation log saved to {self.save_dir / 'logs' / 'augmentation_log.json'}")
+            self.training_logger.info(f"Augmentation log saved to {self.save_dir / 'augmentation_log.json'}")
         except Exception as e:
             self.training_logger.warning(f"Failed to save augmentation log: {e}")
     

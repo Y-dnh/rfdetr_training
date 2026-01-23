@@ -13,7 +13,7 @@ import PIL.Image
 import torch
 
 from rfdetr.training.augmentations.base import BaseTransform, Compose, ToTensor, Normalize
-from rfdetr.training.augmentations.color import RandomHSV
+from rfdetr.training.augmentations.color import RandomHSV, RandomBrightness, RandomContrast, RandomBlur, RandomNoise
 from rfdetr.training.augmentations.geometric import RandomFlip, RandomPerspective, LetterBox
 from rfdetr.training.augmentations.mosaic import Mosaic
 from rfdetr.training.augmentations.mixup import MixUp, CutMix
@@ -31,11 +31,15 @@ class AugmentationPipeline:
     3. MixUp (alpha blending with another image)
     4. CutMix (cut and paste regions)
     5. RandomHSV (color augmentation)
-    6. RandomFlip (horizontal/vertical)
-    7. RandomErasing (random region erasing)
-    8. LetterBox (resize with padding)
-    9. Normalize (mean/std normalization)
-    10. ToTensor (convert to tensor)
+    6. RandomBrightness (brightness adjustment)
+    7. RandomContrast (contrast adjustment)
+    8. RandomBlur (Gaussian blur)
+    9. RandomNoise (Gaussian noise)
+    10. RandomFlip (horizontal/vertical)
+    11. LetterBox (resize with padding)
+    12. RandomErasing (random region erasing)
+    13. ToTensor (convert to tensor)
+    14. Normalize (mean/std normalization)
     
     Args:
         config: AugmentationConfig with all augmentation parameters.
@@ -110,6 +114,27 @@ class AugmentationPipeline:
                 s_gain=cfg.hsv_s,
                 v_gain=cfg.hsv_v,
                 p=1.0 if (cfg.hsv_h > 0 or cfg.hsv_s > 0 or cfg.hsv_v > 0) else 0.0,
+            )
+            
+            # Additional color augmentations
+            self.brightness = RandomBrightness(
+                brightness_range=(0.5, 1.5),
+                p=cfg.brightness,
+            )
+            
+            self.contrast = RandomContrast(
+                contrast_range=(0.5, 1.5),
+                p=cfg.contrast,
+            )
+            
+            self.blur = RandomBlur(
+                kernel_size_range=(3, 7),
+                p=cfg.blur,
+            )
+            
+            self.noise = RandomNoise(
+                noise_range=(5, 30),
+                p=cfg.noise,
             )
             
             self.flip_lr = RandomFlip(
@@ -217,17 +242,30 @@ class AugmentationPipeline:
             image, target = self.hsv(image, target)
             self._log_augmentation('RandomHSV', self.hsv)
             
-            # 6. Flip
+            # 6. Additional color augmentations
+            image, target = self.brightness(image, target)
+            self._log_augmentation('RandomBrightness', self.brightness)
+            
+            image, target = self.contrast(image, target)
+            self._log_augmentation('RandomContrast', self.contrast)
+            
+            image, target = self.blur(image, target)
+            self._log_augmentation('RandomBlur', self.blur)
+            
+            image, target = self.noise(image, target)
+            self._log_augmentation('RandomNoise', self.noise)
+            
+            # 7. Flip
             image, target = self.flip_lr(image, target)
             self._log_augmentation('FlipLR', self.flip_lr)
             
             image, target = self.flip_ud(image, target)
             self._log_augmentation('FlipUD', self.flip_ud)
         
-        # 7. LetterBox (resize with padding)
+        # 8. LetterBox (resize with padding)
         image, target = self.letterbox(image, target)
         
-        # 8. Random Erasing (after resize, on final image)
+        # 9. Random Erasing (after resize, on final image)
         if self.is_train:
             image, target = self.erasing(image, target)
             self._log_augmentation('RandomErasing', self.erasing)

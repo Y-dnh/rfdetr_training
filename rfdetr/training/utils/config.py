@@ -49,6 +49,12 @@ class AugmentationConfig:
         # Random erasing
         erasing: Probability of random erasing.
         
+        # Additional color augmentations
+        brightness: Probability of random brightness adjustment.
+        contrast: Probability of random contrast adjustment.
+        blur: Probability of random Gaussian blur.
+        noise: Probability of random Gaussian noise.
+        
         # Image size
         imgsz: Target image size (height, width) or single int for square.
     """
@@ -68,6 +74,12 @@ class AugmentationConfig:
     hsv_s: float = 0.7
     hsv_v: float = 0.4
     
+    # Additional color augmentations
+    brightness: float = 0.0
+    contrast: float = 0.0
+    blur: float = 0.0
+    noise: float = 0.0
+    
     # Geometric
     degrees: float = 0.0
     translate: float = 0.1
@@ -86,7 +98,8 @@ class AugmentationConfig:
     def __post_init__(self):
         """Validate configuration values."""
         # Validate probabilities
-        prob_fields = ['mosaic', 'mixup', 'cutmix', 'fliplr', 'flipud', 'erasing']
+        prob_fields = ['mosaic', 'mixup', 'cutmix', 'fliplr', 'flipud', 'erasing',
+                       'brightness', 'contrast', 'blur', 'noise']
         for field_name in prob_fields:
             value = getattr(self, field_name)
             if not 0.0 <= value <= 1.0:
@@ -126,6 +139,10 @@ class AugmentationConfig:
             'hsv_h': self.hsv_h,
             'hsv_s': self.hsv_s,
             'hsv_v': self.hsv_v,
+            'brightness': self.brightness,
+            'contrast': self.contrast,
+            'blur': self.blur,
+            'noise': self.noise,
             'degrees': self.degrees,
             'translate': self.translate,
             'scale': self.scale,
@@ -185,6 +202,9 @@ class TrainingConfig:
     project: str = 'runs/train'
     name: str = 'exp'
     exist_ok: bool = False
+    
+    # Visualization settings
+    vis_batches: int = 3  # Number of training batches to visualize
     
     def __post_init__(self):
         """Validate configuration values."""

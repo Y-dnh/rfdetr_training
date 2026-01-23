@@ -3,12 +3,9 @@
 RF-DETR Validation Script
 =========================
 Валідація RF-DETR моделей з генерацією візуалізацій та збереженням метрик.
-Усі параметри конфігурації знаходяться на початку файлу.
 
 Usage:
     python val.py
-
-Налаштуйте конфігурацію нижче перед запуском.
 """
 
 import json
@@ -32,27 +29,50 @@ MODEL_PATH = "runs/rfdetr_training/exp46/weights/best.pt"  # Шлях до на�
 
 
 # =============================================================================
-# КОНФІГУРАЦІЯ ВАЛІДАЦІЇ
+# КОНФІГУРАЦІЯ ІНФЕРЕНСУ / ВАЛІДАЦІЇ
 # =============================================================================
-VALIDATION_CONFIG = {
-    # Параметри детекції
-    "conf_threshold": 0.25,         # Confidence threshold
-    "iou_threshold": 0.5,           # IoU threshold для NMS
+INFERENCE_CONFIG = {
+    # -------------------------------------------------------------------------
+    # Пороги детекції
+    # -------------------------------------------------------------------------
+    "conf_threshold": 0.25,          # Поріг впевненості (0-1), нижче = більше детекцій
+    "iou_threshold": 0.5,            # IoU поріг для NMS (0-1), вище = менше фільтрації
+    "max_det": 300,                  # Макс. детекцій на зображення (None = без ліміту)
     
-    # Розмір зображення
-    "imgsz": 672,
+    # -------------------------------------------------------------------------
+    # Фільтрація класів
+    # -------------------------------------------------------------------------
+    "classes": None,                 # Фільтр класів: None, [0,1,2] або ["person","car"]
+    "agnostic_nms": False,           # Class-agnostic NMS (ігнорує клас при фільтрації)
     
+    # -------------------------------------------------------------------------
+    # Оптимізація
+    # -------------------------------------------------------------------------
+    "half": False,                   # FP16 інференс (швидше, трохи менша точність)
+    
+    # -------------------------------------------------------------------------
     # Обробка
-    "batch_size": 8,
-    "workers": 4,
-    "device": "cuda",               # "cuda" або "cpu"
+    # -------------------------------------------------------------------------
+    "batch_size": 8,                 # Розмір батчу
+    "workers": 4,                    # DataLoader workers (0 для Windows)
+    "device": "cuda",                # Пристрій: "cuda", "cpu", "cuda:0"
     
+    # -------------------------------------------------------------------------
     # Візуалізації
-    "save_visualizations": True,    # Генерувати batch візуалізації
+    # -------------------------------------------------------------------------
+    "save_visualizations": True,     # Зберігати val_batch*_labels.jpg / val_batch*_pred.jpg
+    "max_vis_batches": 3,            # Кількість батчів для візуалізації
+    "save_analysis": True,           # Per-image аналіз (GT/TP/FP/FN)
     
-    # Аналіз детекцій (2x2 grid: GT | TP / FP | FN)
-    # Створює окрему папку "analysis" з візуалізаціями для кожного зображення
-    "save_analysis": True,          # Генерувати per-image analysis візуалізації
+    # -------------------------------------------------------------------------
+    # Збереження результатів
+    # -------------------------------------------------------------------------
+    "save_json": True,               # Зберегти детекції в JSON (COCO format)
+    "save_txt": False,               # Зберегти детекції в txt (YOLO format)
+    
+    # -------------------------------------------------------------------------
+    # ПРИМІТКА: imgsz автоматично визначається з checkpoint
+    # -------------------------------------------------------------------------
 }
 
 
@@ -67,17 +87,9 @@ def main(
     save_results: bool = True,
     **kwargs
 ):
-    """
-    Головна функція для запуску валідації.
-    
-    Args:
-        model_path: Шлях до навченої моделі
-        dataset_dir: Шлях до датасету
-        split: Split для валідації ("valid" або "test")
-        save_results: Чи зберігати результати
-        **kwargs: Додаткові параметри валідації
-    """
+    """Запуск валідації."""
     dataset_dir = dataset_dir or str(DATASET_DIR)
+    config = {**INFERENCE_CONFIG, **kwargs}
     
     print("\n" + "=" * 70)
     print("RF-DETR VALIDATION")
@@ -85,31 +97,27 @@ def main(
     print(f"Model: {model_path}")
     print(f"Dataset: {dataset_dir}")
     print(f"Split: {split}")
-    print(f"Conf threshold: {VALIDATION_CONFIG['conf_threshold']}")
-    print(f"IoU threshold: {VALIDATION_CONFIG['iou_threshold']}")
+    print(f"Conf threshold: {config['conf_threshold']}")
+    print(f"IoU threshold: {config['iou_threshold']}")
+    print(f"Max detections: {config['max_det']}")
+    print(f"Half (FP16): {config['half']}")
     print("=" * 70 + "\n")
     
     # Перевірка датасету
     if not Path(dataset_dir).exists():
-        print(f"❌ ПОМИЛКА: Датасет не знайдено: {dataset_dir}")
-        print("Будь ласка, вкажіть правильний шлях у змінній DATASET_DIR")
+        print(f"ПОМИЛКА: Датасет не знайдено: {dataset_dir}")
         return None
     
-    # Перевірка моделі (якщо вказано)
+    # Перевірка моделі
     if model_path and not Path(model_path).exists():
-        print(f"⚠️ УВАГА: Модель не знайдено: {model_path}")
-        print("Буде використано тільки ground truth візуалізації")
+        print(f"УВАГА: Модель не знайдено: {model_path}")
         model_path = None
-    
-    # Merge configs
-    config = {**VALIDATION_CONFIG, **kwargs}
     
     # Створюємо validator
     validator = RFDETRValidator(
         model_path=model_path,
         conf_threshold=config["conf_threshold"],
         iou_threshold=config["iou_threshold"],
-        imgsz=config["imgsz"],
         batch_size=config["batch_size"],
         workers=config["workers"],
         device=config["device"],
@@ -126,7 +134,7 @@ def main(
     
     # Збереження результатів
     if save_results and results:
-        save_validation_results(results)
+        save_validation_results(results, config)
     
     # Виведення результатів
     print_results(results)
@@ -134,19 +142,16 @@ def main(
     return results
 
 
-def save_validation_results(results: dict):
+def save_validation_results(results: dict, config: dict = None):
     """Збереження результатів у JSON."""
     output_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}/val"))
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Додаємо метадані
     results["validation_date"] = datetime.now().isoformat()
-    results["config"] = VALIDATION_CONFIG
+    results["inference_config"] = config or INFERENCE_CONFIG
     
-    # Зберігаємо
     results_path = output_dir / "validation_results.json"
     
-    # Конвертуємо нон-серіалізовані типи
     def convert(obj):
         if isinstance(obj, Path):
             return str(obj)
@@ -173,13 +178,9 @@ def print_results(results: dict):
     print(f"  Precision:    {metrics.get('precision', 0):.4f}")
     print(f"  Recall:       {metrics.get('recall', 0):.4f}")
     print("=" * 70)
-    
-    print("\n" + "=" * 70)
-    print("✓ ВАЛІДАЦІЯ ЗАВЕРШЕНА")
+    print("ВАЛІДАЦІЯ ЗАВЕРШЕНА")
     print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":
-    # Запуск валідації
     main()
-
