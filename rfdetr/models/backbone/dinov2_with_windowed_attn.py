@@ -18,7 +18,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BackboneOutput, BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
 from transformers.modeling_utils import PreTrainedModel
-from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_linear_layer
+from transformers.pytorch_utils import prune_linear_layer
 from transformers.utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -28,6 +28,24 @@ from transformers.utils import (
     torch_int,
 )
 from transformers.utils.backbone_utils import BackboneMixin
+
+# Compatibility with transformers 5.0+ where find_pruneable_heads_and_indices was removed
+try:
+    from transformers.pytorch_utils import find_pruneable_heads_and_indices
+except ImportError:
+    from typing import Set
+    def find_pruneable_heads_and_indices(
+        heads: Set[int], n_heads: int, head_size: int, already_pruned_heads: Set[int]
+    ):
+        """Find the heads and their indices taking already_pruned_heads into account."""
+        mask = torch.ones(n_heads, head_size)
+        heads = set(heads) - already_pruned_heads
+        for head in heads:
+            head = head - sum(1 if h < head else 0 for h in already_pruned_heads)
+            mask[head] = 0
+        mask = mask.view(-1).contiguous().eq(1)
+        index = torch.arange(len(mask))[mask].long()
+        return heads, index
 
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils.backbone_utils import BackboneConfigMixin, get_aligned_output_features_output_indices

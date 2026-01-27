@@ -548,36 +548,47 @@ def create_analysis_grid(
     gt_boxes_scaled = scale_boxes(gt_boxes)
     pred_boxes_scaled = scale_boxes(pred_boxes)
     
-    # Scale-dependent sizes (optimized for 960px panels = 1920x1920 total)
-    title_bar_height = max(40, image_size // 12)  # ~80px for 960
-    box_font_size = max(16, image_size // 34)     # ~28px for 960
-    title_font_size = max(20, image_size // 26)   # ~37px for 960
-    box_line_width = max(2, image_size // 192)    # ~5px for 960
+    # Scale-dependent sizes
+    box_font_size = max(14, image_size // 40)      # Box label font
+    title_font_size = max(18, image_size // 30)    # Panel title font
+    box_line_width = max(2, image_size // 240)     # Box outline width
+    separator_width = max(1, image_size // 320)    # Line between panels
+    
+    # Gray background color (like YOLO)
+    bg_color = 128
     
     # Create 4 panels
     def create_panel(img_base, boxes, labels, scores, title, box_color=None):
-        """Create a single panel with boxes and title."""
-        # Create canvas with padding for title
-        panel = np.full((image_size + title_bar_height, image_size, 3), 40, dtype=np.uint8)  # Dark background
+        """Create a single panel with boxes and title overlay."""
+        # Create canvas with gray background
+        panel = np.full((image_size, image_size, 3), bg_color, dtype=np.uint8)
         
-        # Center image in panel
-        y_offset = title_bar_height + (image_size - new_h) // 2
+        # Center image in panel (preserve aspect ratio)
+        y_offset = (image_size - new_h) // 2
         x_offset = (image_size - new_w) // 2
         panel[y_offset:y_offset + new_h, x_offset:x_offset + new_w] = img_base
         
+        # Convert to PIL for drawing
+        pil_panel = Image.fromarray(panel)
+        draw = ImageDraw.Draw(pil_panel)
+        
+        # Load fonts
+        try:
+            box_font = ImageFont.truetype("arial.ttf", box_font_size)
+            title_font = ImageFont.truetype("arial.ttf", title_font_size)
+        except:
+            try:
+                box_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", box_font_size)
+                title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", title_font_size)
+            except:
+                box_font = ImageFont.load_default()
+                title_font = ImageFont.load_default()
+        
+        # Draw title overlay (top-left, white text)
+        draw.text((5, 2), title, fill=(255, 255, 255), font=title_font)
+        
         # Draw boxes
         if len(boxes) > 0:
-            pil_panel = Image.fromarray(panel)
-            draw = ImageDraw.Draw(pil_panel)
-            
-            try:
-                font = ImageFont.truetype("arial.ttf", box_font_size)
-            except:
-                try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", box_font_size)
-                except:
-                    font = ImageFont.load_default()
-            
             for i, (box, label) in enumerate(zip(boxes, labels)):
                 x1, y1, x2, y2 = box.astype(int)
                 x1 += x_offset
@@ -592,59 +603,36 @@ def create_analysis_grid(
                 
                 draw.rectangle([x1, y1, x2, y2], outline=color, width=box_line_width)
                 
-                # Label text
+                # Label text: "class conf" or just "class 1.0" for GT
                 if class_names is not None and int(label) < len(class_names):
                     label_text = class_names[int(label)]
                 else:
                     label_text = str(int(label))
                 
                 if scores is not None and i < len(scores):
-                    label_text = f"{label_text} {scores[i]:.2f}"
+                    label_text = f"{label_text} {scores[i]:.1f}"
+                else:
+                    label_text = f"{label_text} 1.0"  # GT always 1.0
                 
-                bbox = draw.textbbox((x1, y1), label_text, font=font)
+                bbox = draw.textbbox((x1, y1), label_text, font=box_font)
                 text_w = bbox[2] - bbox[0]
                 text_h = bbox[3] - bbox[1]
                 
-                padding = max(4, box_font_size // 4)
-                draw.rectangle([x1, y1 - text_h - padding, x1 + text_w + padding, y1], fill=color)
-                draw.text((x1 + padding // 2, y1 - text_h - padding // 2), label_text, fill=(255, 255, 255), font=font)
-            
-            panel = np.array(pil_panel)
-        
-        # Draw title
-        pil_panel = Image.fromarray(panel)
-        draw = ImageDraw.Draw(pil_panel)
-        
-        try:
-            title_font = ImageFont.truetype("arial.ttf", title_font_size)
-        except:
-            try:
-                title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", title_font_size)
-            except:
-                title_font = ImageFont.load_default()
-        
-        # Title background
-        draw.rectangle([0, 0, image_size, title_bar_height - 2], fill=(60, 60, 60))
-        
-        # Title text centered
-        bbox = draw.textbbox((0, 0), title, font=title_font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-        x_title = (image_size - text_w) // 2
-        y_title = (title_bar_height - text_h) // 2 - 2
-        draw.text((x_title, y_title), title, fill=(255, 255, 255), font=title_font)
+                padding = 2
+                # Draw label background and text
+                draw.rectangle([x1, y1 - text_h - padding * 2, x1 + text_w + padding * 2, y1], fill=color)
+                draw.text((x1 + padding, y1 - text_h - padding), label_text, fill=(255, 255, 255), font=box_font)
         
         return np.array(pil_panel)
     
-    # Panel 1: Ground Truth (all GT boxes - green)
+    # Panel 1: Ground Truth (per-class colors)
     gt_panel = create_panel(
         image_resized.copy(),
         gt_boxes_scaled, gt_labels, None,
-        f"Ground Truth ({len(gt_boxes)})",
-        box_color=(0, 255, 0),  # Green
+        "Ground Truth",
     )
     
-    # Panel 2: True Positives (matched predictions - blue)
+    # Panel 2: True Positives (matched predictions)
     if len(tp_indices) > 0:
         tp_boxes = pred_boxes_scaled[tp_indices]
         tp_labels = pred_labels[tp_indices]
@@ -657,11 +645,10 @@ def create_analysis_grid(
     tp_panel = create_panel(
         image_resized.copy(),
         tp_boxes, tp_labels, tp_scores,
-        f"True Positive ({len(tp_indices)})",
-        box_color=(0, 200, 255),  # Cyan
+        "True Positives",
     )
     
-    # Panel 3: False Positives (unmatched predictions - red)
+    # Panel 3: False Positives (unmatched predictions)
     if len(fp_indices) > 0:
         fp_boxes = pred_boxes_scaled[fp_indices]
         fp_labels = pred_labels[fp_indices]
@@ -674,11 +661,10 @@ def create_analysis_grid(
     fp_panel = create_panel(
         image_resized.copy(),
         fp_boxes, fp_labels, fp_scores,
-        f"False Positive ({len(fp_indices)})",
-        box_color=(255, 80, 80),  # Red
+        "False Positives",
     )
     
-    # Panel 4: False Negatives (unmatched GT - orange)
+    # Panel 4: False Negatives (unmatched GT)
     if len(fn_indices) > 0:
         fn_boxes = gt_boxes_scaled[fn_indices]
         fn_labels = gt_labels[fn_indices]
@@ -689,14 +675,21 @@ def create_analysis_grid(
     fn_panel = create_panel(
         image_resized.copy(),
         fn_boxes, fn_labels, None,
-        f"False Negative ({len(fn_indices)})",
-        box_color=(255, 165, 0),  # Orange
+        "False Negatives",
     )
     
-    # Combine panels into 2x2 grid
-    top_row = np.hstack([gt_panel, tp_panel])
-    bottom_row = np.hstack([fp_panel, fn_panel])
-    grid = np.vstack([top_row, bottom_row])
+    # Combine panels into 2x2 grid with separator lines
+    panel_h, panel_w = gt_panel.shape[:2]
+    grid_h = panel_h * 2 + separator_width
+    grid_w = panel_w * 2 + separator_width
+    
+    grid = np.full((grid_h, grid_w, 3), bg_color, dtype=np.uint8)
+    
+    # Place panels
+    grid[0:panel_h, 0:panel_w] = gt_panel                                    # Top-left
+    grid[0:panel_h, panel_w + separator_width:] = tp_panel                   # Top-right
+    grid[panel_h + separator_width:, 0:panel_w] = fp_panel                   # Bottom-left
+    grid[panel_h + separator_width:, panel_w + separator_width:] = fn_panel  # Bottom-right
     
     return grid
 
@@ -727,7 +720,7 @@ class AnalysisVisualizer:
         conf_threshold: float = 0.25,
         image_size: int = 320,
     ):
-        self.save_dir = Path(save_dir) / "analysis"
+        self.save_dir = Path(save_dir) / "visualizations"
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.class_names = class_names
         self.iou_threshold = iou_threshold
@@ -742,7 +735,7 @@ class AnalysisVisualizer:
             'total_fn': 0,
         }
     
-    def save_analysis(
+    def save_visualization(
         self,
         image: Union[torch.Tensor, np.ndarray],
         gt_boxes: Union[torch.Tensor, np.ndarray],

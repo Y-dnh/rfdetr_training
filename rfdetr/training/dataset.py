@@ -109,6 +109,13 @@ class RFDETRDataset(torch.utils.data.Dataset):
         # Create COCO API object for evaluation
         self._coco_api = None
     
+    def __getstate__(self):
+        """Pickle support: exclude non-serializable COCO API object."""
+        state = self.__dict__.copy()
+        # Exclude COCO API as it's not serializable and will be recreated on demand
+        state['_coco_api'] = None
+        return state
+    
     def __setstate__(self, state):
         """Pickle support: restore dataset reference in pipeline after unpickle."""
         self.__dict__.update(state)

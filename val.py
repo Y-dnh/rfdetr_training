@@ -22,10 +22,11 @@ PROJECT_NAME = "rfdetr_validation"
 
 # Шляхи
 BASE_DIR = Path(__file__).parent
-DATASET_DIR = BASE_DIR / "tests" / "test_dataset"  # Змініть на ваш датасет
+DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
 
 # Модель
-MODEL_PATH = "runs/rfdetr_training/exp46/weights/best.pt"  # Шлях до навченої моделі
+MODEL_PATH = "rfdetr_dpsu_v8.pth"  # Шлях до навченої моделі
+MODEL_SIZE = "m"                # Розмір моделі ('n', 's', 'm', 'b', 'l') - "m" для RF-DETR Medium
 
 
 # =============================================================================
@@ -35,7 +36,7 @@ INFERENCE_CONFIG = {
     # -------------------------------------------------------------------------
     # Пороги детекції
     # -------------------------------------------------------------------------
-    "conf_threshold": 0.25,          # Поріг впевненості (0-1), нижче = більше детекцій
+    "conf_threshold": 0.5,          # Поріг впевненості (0-1), нижче = більше детекцій
     "iou_threshold": 0.5,            # IoU поріг для NMS (0-1), вище = менше фільтрації
     "max_det": 300,                  # Макс. детекцій на зображення (None = без ліміту)
     
@@ -48,21 +49,20 @@ INFERENCE_CONFIG = {
     # -------------------------------------------------------------------------
     # Оптимізація
     # -------------------------------------------------------------------------
-    "half": False,                   # FP16 інференс (швидше, трохи менша точність)
+    "half": True,                   # FP16 інференс (швидше, трохи менша точність)
     
     # -------------------------------------------------------------------------
     # Обробка
     # -------------------------------------------------------------------------
-    "batch_size": 8,                 # Розмір батчу
+    "batch_size": 2,                 # Розмір батчу
     "workers": 4,                    # DataLoader workers (0 для Windows)
     "device": "cuda",                # Пристрій: "cuda", "cpu", "cuda:0"
     
     # -------------------------------------------------------------------------
     # Візуалізації
     # -------------------------------------------------------------------------
-    "save_visualizations": True,     # Зберігати val_batch*_labels.jpg / val_batch*_pred.jpg
+    "save_visualizations": True,     # Зберігати візуалізації (batch + per-image GT/TP/FP/FN)
     "max_vis_batches": 3,            # Кількість батчів для візуалізації
-    "save_analysis": True,           # Per-image аналіз (GT/TP/FP/FN)
     
     # -------------------------------------------------------------------------
     # Збереження результатів
@@ -101,6 +101,7 @@ def main(
     print(f"IoU threshold: {config['iou_threshold']}")
     print(f"Max detections: {config['max_det']}")
     print(f"Half (FP16): {config['half']}")
+    print(f"Device: {config['device']}")
     print("=" * 70 + "\n")
     
     # Перевірка датасету
@@ -113,15 +114,23 @@ def main(
         print(f"УВАГА: Модель не знайдено: {model_path}")
         model_path = None
     
+    # Determine resolution based on model size
+    resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 560}
+    imgsz = resolutions.get(MODEL_SIZE, 560)
+    print(f"Using resolution: {imgsz} for model size '{MODEL_SIZE}'")
+
     # Створюємо validator
+
     validator = RFDETRValidator(
         model_path=model_path,
+        model_size=MODEL_SIZE,  # <--- Передаємо розмір
+        imgsz=imgsz,            # <--- Передаємо правильну роздільну здатність
         conf_threshold=config["conf_threshold"],
         iou_threshold=config["iou_threshold"],
         batch_size=config["batch_size"],
         workers=config["workers"],
         device=config["device"],
-        save_dir=f"runs/{PROJECT_NAME}/val",
+        save_dir=f"runs/{PROJECT_NAME}",
     )
     
     # Запуск валідації
@@ -129,22 +138,18 @@ def main(
         dataset_dir=dataset_dir,
         split=split,
         save_visualizations=config.get("save_visualizations", True),
-        save_analysis=config.get("save_analysis", False),
     )
     
     # Збереження результатів
     if save_results and results:
         save_validation_results(results, config)
-    
-    # Виведення результатів
-    print_results(results)
-    
+        
     return results
 
 
 def save_validation_results(results: dict, config: dict = None):
     """Збереження результатів у JSON."""
-    output_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}/val"))
+    output_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}"))
     output_dir.mkdir(parents=True, exist_ok=True)
     
     results["validation_date"] = datetime.now().isoformat()
@@ -162,24 +167,6 @@ def save_validation_results(results: dict, config: dict = None):
     
     print(f"\n[Results] Результати збережено: {results_path}")
 
-
-def print_results(results: dict):
-    """Виведення результатів у консоль."""
-    if not results:
-        return
-    
-    metrics = results.get("metrics", {})
-    
-    print("\n" + "=" * 70)
-    print("РЕЗУЛЬТАТИ ВАЛІДАЦІЇ")
-    print("=" * 70)
-    print(f"  mAP@0.5:      {metrics.get('mAP50', 0):.4f}")
-    print(f"  mAP@0.5:0.95: {metrics.get('mAP50-95', 0):.4f}")
-    print(f"  Precision:    {metrics.get('precision', 0):.4f}")
-    print(f"  Recall:       {metrics.get('recall', 0):.4f}")
-    print("=" * 70)
-    print("ВАЛІДАЦІЯ ЗАВЕРШЕНА")
-    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

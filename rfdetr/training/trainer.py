@@ -1008,17 +1008,38 @@ class RFDETRTrainer:
         return np.vstack(rows)
     
     def _accumulate_predictions(self, targets, results) -> None:
-        """Accumulate predictions for confusion matrix and curves."""
+        """Accumulate predictions for confusion matrix and curves.
+        
+        Stores boxes for proper IoU-based matching when computing confusion matrix.
+        """
         for target, result in zip(targets, results):
+            # GT data - convert normalized cxcywh to absolute xyxy
+            gt_boxes = target['boxes'].cpu()
             gt_labels = target['labels'].cpu().numpy()
+            orig_size = target['orig_size'].cpu()
+            h, w = orig_size[0].item(), orig_size[1].item()
+            
+            # Convert GT boxes from normalized cxcywh to absolute xyxy
+            if len(gt_boxes) > 0 and gt_boxes.max() <= 1.0:
+                gt_boxes_xyxy = torch.zeros_like(gt_boxes)
+                gt_boxes_xyxy[:, 0] = (gt_boxes[:, 0] - gt_boxes[:, 2] / 2) * w  # x1
+                gt_boxes_xyxy[:, 1] = (gt_boxes[:, 1] - gt_boxes[:, 3] / 2) * h  # y1
+                gt_boxes_xyxy[:, 2] = (gt_boxes[:, 0] + gt_boxes[:, 2] / 2) * w  # x2
+                gt_boxes_xyxy[:, 3] = (gt_boxes[:, 1] + gt_boxes[:, 3] / 2) * h  # y2
+                gt_boxes = gt_boxes_xyxy
+            
+            # Predictions are already in absolute xyxy from postprocessor
+            pred_boxes = result['boxes'].cpu().numpy()
             pred_labels = result['labels'].cpu().numpy()
             pred_scores = result['scores'].cpu().numpy()
             
             self.all_predictions.append({
+                'boxes': pred_boxes,
                 'labels': pred_labels,
                 'scores': pred_scores,
             })
             self.all_targets.append({
+                'boxes': gt_boxes.numpy(),
                 'labels': gt_labels,
             })
     
@@ -1039,22 +1060,72 @@ class RFDETRTrainer:
             self.metrics_logger.save_plots()
             self.metrics_logger.save_csv()
             
-            # Save confusion matrix
+            # Save confusion matrix with proper IoU matching
             if self.all_predictions and self.all_targets:
-                pred_labels = np.concatenate([p['labels'] for p in self.all_predictions if len(p['labels']) > 0])
-                gt_labels = np.concatenate([t['labels'] for t in self.all_targets if len(t['labels']) > 0])
+                from rfdetr.training.visualizations.confusion_matrix import plot_confusion_matrix
+                from rfdetr.training.visualizations import match_predictions_to_gt
                 
-                if len(pred_labels) > 0 and len(gt_labels) > 0:
-                    from rfdetr.training.visualizations.confusion_matrix import plot_confusion_matrix
+                num_classes = len(self.class_names)
+                # Matrix: rows = GT class, cols = Pred class
+                # Last row/col = background (FP for col, FN for row)
+                cm = np.zeros((num_classes + 1, num_classes + 1))
+                
+                iou_threshold = 0.5
+                conf_threshold = 0.25
+                
+                for pred_data, gt_data in zip(self.all_predictions, self.all_targets):
+                    gt_boxes = gt_data['boxes']
+                    gt_labels = gt_data['labels']
+                    pred_boxes = pred_data['boxes']
+                    pred_labels = pred_data['labels']
+                    pred_scores = pred_data['scores']
                     
-                    num_classes = len(self.class_names)
-                    cm = np.zeros((num_classes + 1, num_classes + 1))
+                    # Filter by confidence
+                    if len(pred_scores) > 0:
+                        mask = pred_scores >= conf_threshold
+                        pred_boxes = pred_boxes[mask]
+                        pred_labels = pred_labels[mask]
+                        pred_scores = pred_scores[mask]
                     
-                    for pl in pred_labels[:len(gt_labels)]:
-                        if pl < num_classes:
-                            cm[pl, pl] += 1
+                    if len(gt_boxes) == 0 and len(pred_boxes) == 0:
+                        continue
                     
+                    # Match predictions to GT
+                    tp_indices, fp_indices, fn_indices = match_predictions_to_gt(
+                        gt_boxes, gt_labels,
+                        pred_boxes, pred_labels, pred_scores,
+                        iou_threshold=iou_threshold,
+                    )
+                    
+                    # True Positives: GT class -> Pred class (should be same)
+                    matched_gt = set()
+                    for pred_idx in tp_indices:
+                        pred_label = int(pred_labels[pred_idx])
+                        # Find which GT this matched to
+                        for gt_idx, gt_label in enumerate(gt_labels):
+                            if gt_idx not in matched_gt:
+                                gt_label_int = int(gt_label)
+                                if gt_label_int == pred_label:  # Class must match for TP
+                                    if gt_label_int < num_classes and pred_label < num_classes:
+                                        cm[gt_label_int, pred_label] += 1
+                                    matched_gt.add(gt_idx)
+                                    break
+                    
+                    # False Positives: background -> Pred class
+                    for pred_idx in fp_indices:
+                        pred_label = int(pred_labels[pred_idx])
+                        if pred_label < num_classes:
+                            cm[num_classes, pred_label] += 1  # Background row
+                    
+                    # False Negatives: GT class -> background
+                    for gt_idx in fn_indices:
+                        gt_label = int(gt_labels[gt_idx])
+                        if gt_label < num_classes:
+                            cm[gt_label, num_classes] += 1  # Background column
+                
+                if cm.sum() > 0:
                     plot_confusion_matrix(cm, self.save_dir / 'confusion_matrix.png', self.class_names)
+                    self.training_logger.info(f"Confusion matrix saved with {int(cm.sum())} samples")
             
             # Generate curves
             self._generate_placeholder_curves()

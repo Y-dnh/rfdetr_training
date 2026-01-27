@@ -138,12 +138,14 @@ class ConfusionMatrix:
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.5,
         include_background: bool = True,
+        imgsz: int = 640,
     ):
         self.num_classes = num_classes
         self.class_names = class_names
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.include_background = include_background
+        self.imgsz = imgsz
         
         # Initialize matrix
         n = num_classes + 1 if include_background else num_classes
@@ -184,6 +186,23 @@ class ConfusionMatrix:
             gt_boxes = gt_boxes.cpu().numpy()
         if hasattr(gt_labels, 'numpy'):
             gt_labels = gt_labels.cpu().numpy()
+        
+        # Convert GT boxes from normalized cxcywh to xyxy if needed
+        # and scale to match prediction coordinates using imgsz
+        if len(gt_boxes) > 0 and np.max(gt_boxes) <= 1.0:
+            # Use imgsz for scaling normalized boxes to absolute coordinates
+            scale = self.imgsz
+            
+            # Assume normalized cxcywh format - convert to xyxy and scale
+            cx, cy, w, h = gt_boxes[:, 0], gt_boxes[:, 1], gt_boxes[:, 2], gt_boxes[:, 3]
+            gt_boxes_xyxy = np.zeros_like(gt_boxes)
+            gt_boxes_xyxy[:, 0] = (cx - w / 2) * scale  # x1
+            gt_boxes_xyxy[:, 1] = (cy - h / 2) * scale  # y1
+            gt_boxes_xyxy[:, 2] = (cx + w / 2) * scale  # x2
+            gt_boxes_xyxy[:, 3] = (cy + h / 2) * scale  # y2
+            gt_boxes = gt_boxes_xyxy
+
+
         
         # Filter by confidence
         mask = pred_scores >= self.conf_threshold
