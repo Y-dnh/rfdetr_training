@@ -14,9 +14,14 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-
 from transformers.activations import ACT2FN
-from transformers.modeling_outputs import BackboneOutput, BaseModelOutput, BaseModelOutputWithPooling, ImageClassifierOutput
+from transformers.configuration_utils import PretrainedConfig
+from transformers.modeling_outputs import (
+    BackboneOutput,
+    BaseModelOutput,
+    BaseModelOutputWithPooling,
+    ImageClassifierOutput,
+)
 from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import prune_linear_layer
 from transformers.utils import (
@@ -49,7 +54,6 @@ except ImportError:
 
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils.backbone_utils import BackboneConfigMixin, get_aligned_output_features_output_indices
-
 
 logger = logging.get_logger(__name__)
 
