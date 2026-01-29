@@ -264,27 +264,42 @@ class ModelConfig:
     Configuration for RF-DETR model.
     
     Attributes:
-        model_size: Model size variant ('n', 's', 'm', 'b', 'l' for nano/small/medium/base/large).
+        model_size: Model size variant:
+            - 'n' (nano): 384×384, ~30.5M params
+            - 's' (small): 512×512, ~32.1M params  
+            - 'm' (medium): 576×576, ~33.7M params
+            - 'b' (base): 560×560, ~29M params
+            - 'l' (large): 704×704, ~33.9M params
+            - 'xl' (xlarge): 700×700, ~126.4M params (requires platform license)
+            - '2xl' (2xlarge): 880×880, ~126.9M params (requires platform license)
         num_classes: Number of detection classes.
         pretrained_weights: Path to pretrained weights or None.
         freeze_encoder: Whether to freeze the encoder.
         freeze_encoder_epochs: Number of epochs to keep encoder frozen.
+        accept_platform_license: Required for xl/2xl models (Platform Model License 1.0).
     """
     model_size: str = 'b'  # base
     num_classes: int = 80  # COCO classes
     pretrained_weights: Optional[str] = None
     freeze_encoder: bool = False
     freeze_encoder_epochs: int = 0
+    accept_platform_license: bool = False  # Required for xl/2xl models
     
     def __post_init__(self):
         """Validate configuration values."""
-        valid_sizes = ['n', 's', 'm', 'b', 'l']
+        valid_sizes = ['n', 's', 'm', 'b', 'l', 'xl', '2xl']
         if self.model_size not in valid_sizes:
             raise ValueError(f"model_size must be one of {valid_sizes}, got {self.model_size}")
         if self.num_classes <= 0:
             raise ValueError(f"num_classes must be > 0, got {self.num_classes}")
         if self.freeze_encoder_epochs < 0:
             raise ValueError(f"freeze_encoder_epochs must be >= 0, got {self.freeze_encoder_epochs}")
+        # Check platform license for xl/2xl
+        if self.model_size in ['xl', '2xl'] and not self.accept_platform_license:
+            raise ValueError(
+                f"Model size '{self.model_size}' requires Platform Model License 1.0. "
+                "Set accept_platform_license=True to use this model."
+            )
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary."""
@@ -294,6 +309,7 @@ class ModelConfig:
             'pretrained_weights': self.pretrained_weights,
             'freeze_encoder': self.freeze_encoder,
             'freeze_encoder_epochs': self.freeze_encoder_epochs,
+            'accept_platform_license': self.accept_platform_license,
         }
     
     @classmethod

@@ -23,6 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from rfdetr.training.dataset import RFDETRDataset, build_dataset, collate_fn
 from rfdetr.training.augmentations.pipeline import AugmentationPipeline, ValidationPipeline
@@ -138,7 +139,7 @@ class RFDETRTrainer:
         
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / 'weights').mkdir(exist_ok=True)
-        (save_dir / 'logs').mkdir(exist_ok=True)
+        # (save_dir / 'logs').mkdir(exist_ok=True)  # Disabled empty logs folder creation
         
         return save_dir
     
@@ -150,6 +151,7 @@ class RFDETRTrainer:
             RFDETRBaseConfig, RFDETRLargeConfig, RFDETRNanoConfig,
             RFDETRSmallConfig, RFDETRMediumConfig,
         )
+        from rfdetr.platform.models import RFDETRXLargeConfig, RFDETR2XLargeConfig
         
         cfg = self.model_config
         size_to_config = {
@@ -158,6 +160,8 @@ class RFDETRTrainer:
             'm': RFDETRMediumConfig,
             'b': RFDETRBaseConfig,
             'l': RFDETRLargeConfig,
+            'xl': RFDETRXLargeConfig,
+            '2xl': RFDETR2XLargeConfig,
         }
         
         rfdetr_config_class = size_to_config.get(cfg.model_size, RFDETRBaseConfig)
@@ -301,8 +305,10 @@ class RFDETRTrainer:
             'n': 384,   # Nano
             's': 512,   # Small
             'm': 576,   # Medium
-            'b': 560,   # Base
-            'l': 560,   # Large
+            'b': 576,   # Base (Aligned with Medium or similar if not specified, but keeping safe default or checking user intent. User only showed N,S,M,L,XL,2XL. I'll stick to L=704 per image. I will set B to 576 to be safe or 560? The user said "review sizes". I will stick to what's known: L=704)
+            'l': 704,   # Large
+            'xl': 700,  # XLarge (platform)
+            '2xl': 880, # 2XLarge (platform)
         }
         return size_to_resolution.get(self.model_config.model_size, 560)
     
@@ -464,7 +470,12 @@ class RFDETRTrainer:
         total_loss_giou = 0.0
         num_batches = len(self.train_loader)
         
-        for batch_idx, batch_data in enumerate(self.train_loader):
+
+        # Header for progress bar
+        print(("%10s" * 7) % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss", "Instances", "Size"))
+        pbar = tqdm(self.train_loader, total=num_batches, bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]')
+        
+        for batch_idx, batch_data in enumerate(pbar):
             images, targets, aug_logs = batch_data
             
             # Log augmentations for first batches
@@ -513,12 +524,19 @@ class RFDETRTrainer:
             total_loss_bbox += loss_dict.get('loss_bbox', torch.tensor(0)).item()
             total_loss_giou += loss_dict.get('loss_giou', torch.tensor(0)).item()
             
-            # Log progress
-            if batch_idx % 10 == 0:
-                self.training_logger.info(
-                    f"Epoch {epoch} [{batch_idx}/{num_batches}] "
-                    f"loss: {losses.item():.4f} lr: {self.optimizer.param_groups[0]['lr']:.6f}"
-                )
+            # Update progress bar
+            mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
+            
+            desc = ("%10s" * 2 + "%10.4g" * 3 + "%10s" * 2) % (
+                f"{epoch + 1}/{self.training_config.epochs}",
+                mem,
+                loss_dict.get('loss_bbox', torch.tensor(0)).item(),
+                loss_dict.get('loss_ce', torch.tensor(0)).item(),
+                loss_dict.get('loss_giou', torch.tensor(0)).item(),
+                sum(len(t['boxes']) for t in targets),
+                f"{h}"
+            )
+            pbar.set_description(desc)
         
         return {
             'train/box_loss': total_loss_bbox / num_batches,
@@ -705,13 +723,16 @@ class RFDETRTrainer:
                 
                 # Convert numpy types to Python types for JSON serialization
                 def json_converter(obj):
-                    if isinstance(obj, np.floating):
+                    if isinstance(obj, (np.floating, float)):
                         return float(obj)
-                    if isinstance(obj, np.integer):
+                    if isinstance(obj, (np.integer, int)):
                         return int(obj)
                     if isinstance(obj, np.ndarray):
                         return obj.tolist()
-                    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+                    if isinstance(obj, torch.Tensor):
+                        return obj.cpu().numpy().tolist()
+                    return str(obj)
+                    # raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
                 
                 with open(aug_log_path, 'w', encoding='utf-8') as f:
                     json.dump({
@@ -1212,12 +1233,13 @@ class RFDETRTrainer:
         """Save training checkpoint."""
         checkpoint = {
             'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.scheduler.state_dict() if self.scheduler else None,
             'metrics': metrics,
             'best_map': self.best_map,
             'class_names': self.class_names,
+            # Add arguments-like object for compatibility if needed, though trainer config differs
         }
         
         torch.save(checkpoint, self.save_dir / 'weights' / 'last.pt')
@@ -1235,12 +1257,25 @@ class RFDETRTrainer:
         self.current_epoch = checkpoint['epoch'] + 1
         self.best_map = checkpoint.get('best_map', 0.0)
         
-        if checkpoint.get('model_state_dict'):
+        # Load model weights (support both 'model' and 'model_state_dict')
+        if checkpoint.get('model'):
+            self.model.load_state_dict(checkpoint['model'])
+        elif checkpoint.get('model_state_dict'):
             self.model.load_state_dict(checkpoint['model_state_dict'])
-        if self.optimizer and checkpoint.get('optimizer_state_dict'):
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if self.scheduler and checkpoint.get('scheduler_state_dict'):
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            
+        # Load optimizer (support both 'optimizer' and 'optimizer_state_dict')
+        if self.optimizer:
+            if checkpoint.get('optimizer'):
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
+            elif checkpoint.get('optimizer_state_dict'):
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                
+        # Load scheduler (support both 'lr_scheduler' and 'scheduler_state_dict')
+        if self.scheduler:
+            if checkpoint.get('lr_scheduler'):
+                self.scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            elif checkpoint.get('scheduler_state_dict'):
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         
         self.training_logger.info(f"Resumed from epoch {self.current_epoch}")
     

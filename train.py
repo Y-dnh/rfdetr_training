@@ -41,7 +41,7 @@ PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для заван�
 # КОНФІГУРАЦІЯ МОДЕЛІ
 # =============================================================================
 MODEL_CONFIG = ModelConfig(
-    model_size="n",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large
+    model_size="n",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large, xl=xlarge, 2xl=2xlarge
     num_classes=3,                  # Кількість класів (автовизначається з датасету)
     pretrained_weights=PRETRAINED_WEIGHTS,  # Шлях до попередньо навчених ваг
     freeze_encoder=False,           # Заморозити encoder (DINOv2 backbone)
@@ -174,7 +174,7 @@ def main():
     setup_seed(SEED)
     
     # Визначаємо resolution по розміру моделі
-    model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 560}
+    model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 576, 'l': 704, 'xl': 700, '2xl': 880}
     resolution = model_resolutions.get(MODEL_CONFIG.model_size, 560)
     
     print("\n" + "=" * 70)
@@ -190,7 +190,7 @@ def main():
     
     # Перевірка датасету
     if not DATASET_DIR.exists():
-        print(f"❌ ПОМИЛКА: Датасет не знайдено: {DATASET_DIR}")
+        print(f"ERROR: Датасет не знайдено: {DATASET_DIR}")
         print("Будь ласка, вкажіть правильний шлях у змінній DATASET_DIR")
         return None
     

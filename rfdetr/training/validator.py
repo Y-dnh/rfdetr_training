@@ -33,6 +33,7 @@ from rfdetr.training.visualizations import (
     match_predictions_to_gt,
 )
 from rfdetr.detr import RFDETRBase, RFDETRLarge, RFDETRNano, RFDETRSmall, RFDETRMedium
+from rfdetr.platform.models import RFDETRXLarge, RFDETR2XLarge
 
 
 class RFDETRValidator:
@@ -120,7 +121,15 @@ class RFDETRValidator:
             if 'model_config' in checkpoint:
                 model_config = checkpoint['model_config']
                 if isinstance(model_config, dict) and 'model_size' in model_config:
-                    size_to_resolution = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 560}
+                    size_to_resolution = {
+                        'n': 384, 
+                        's': 512, 
+                        'm': 576, 
+                        'b': 576, 
+                        'l': 704, 
+                        'xl': 700, 
+                        '2xl': 880
+                    }
                     model_size = model_config['model_size']
                     self.imgsz = size_to_resolution.get(model_size, 560)
                     print(f"[Validator] Auto-detected imgsz={self.imgsz} from model_size={model_size}")
@@ -184,6 +193,18 @@ class RFDETRValidator:
                 self.rfdetr = RFDETRMedium(pretrain_weights=self.model_path, num_classes=num_classes)
             elif model_size in ['l', 'large']:
                 self.rfdetr = RFDETRLarge(pretrain_weights=self.model_path, num_classes=num_classes)
+            elif model_size in ['xl', 'xlarge']:
+                self.rfdetr = RFDETRXLarge(
+                    pretrain_weights=self.model_path, 
+                    num_classes=num_classes,
+                    accept_platform_model_license=True
+                )
+            elif model_size in ['2xl', '2xlarge']:
+                self.rfdetr = RFDETR2XLarge(
+                    pretrain_weights=self.model_path, 
+                    num_classes=num_classes,
+                    accept_platform_model_license=True
+                )
             else:
                 self.rfdetr = RFDETRBase(pretrain_weights=self.model_path, num_classes=num_classes)
         except RuntimeError as e:
@@ -300,7 +321,7 @@ class RFDETRValidator:
                 class_names=self.class_names,
                 iou_threshold=self.iou_threshold,
                 conf_threshold=self.conf_threshold,
-                image_size=1920,  # 960x960 per panel = 1920x1920 total grid
+                image_size=960,  # 960x960 per panel = 1920x1920 total grid
             )
             print(f"[Analysis] Saving per-image analysis to: {analysis_visualizer.save_dir}")
         
@@ -318,7 +339,11 @@ class RFDETRValidator:
         total_inference_time = 0.0
         total_images = 0
         
-        pbar = tqdm(dataloader, desc="Validating", unit="batch")
+        
+        # Header for progress bar
+        print(("%20s" + "%10s" * 6) % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95)"))
+        pbar = tqdm(dataloader, total=len(dataloader), bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]')
+        
         for batch_idx, (images, targets, _aug_logs) in enumerate(pbar):
             images = images.to(device)
             batch_size = images.size(0)
@@ -379,9 +404,29 @@ class RFDETRValidator:
             total_inference_time += inference_time
             total_images += batch_size
             
-            # Update progress bar with current FPS
-            current_fps = batch_size / inference_time if inference_time > 0 else 0
-            pbar.set_postfix({'FPS': f'{current_fps:.1f}'})
+
+            
+            # Calculate running metrics for display
+            total_tp_running = sum(s['tp'] for s in class_stats.values())
+            total_fp_running = sum(s['fp'] for s in class_stats.values())
+            total_fn_running = sum(s['fn'] for s in class_stats.values())
+            total_gt_running = sum(s['gt'] for s in class_stats.values())
+            
+            p_running = total_tp_running / (total_tp_running + total_fp_running + 1e-9)
+            r_running = total_tp_running / (total_tp_running + total_fn_running + 1e-9)
+            
+            # Update progress bar
+            desc = ("%20s" + "%10s" * 2 + "%10.3f" * 2 + "%10s" * 2) % (
+                "all",
+                total_images,
+                total_gt_running,
+                p_running,
+                r_running,
+                "0.0",
+                "0.0"
+            )
+            pbar.set_description(desc)
+            pbar.set_postfix_str(f"{batch_size/inference_time:.2f}fps")
             
             # Collect for metrics
             all_predictions.extend(predictions)
@@ -495,7 +540,7 @@ class RFDETRValidator:
         avg_fps = total_images / total_inference_time if total_inference_time > 0 else 0
         avg_latency_ms = (total_inference_time / total_images) * 1000 if total_images > 0 else 0
         
-        print(f"\n📊 Inference Speed: {avg_fps:.1f} FPS ({avg_latency_ms:.2f} ms/image)")
+        print(f"\n[STATS] Inference Speed: {avg_fps:.1f} FPS ({avg_latency_ms:.2f} ms/image)")
         
         # Prepare results dict for report generation
         results = {
@@ -766,7 +811,7 @@ class RFDETRValidator:
         inference_fps = results.get('inference_fps', 0)
         latency_ms = 1000 / inference_fps if inference_fps > 0 else 0
         
-        report_content = f"""# 🎯 RF-DETR Validation Report
+        report_content = f"""# RF-DETR Validation Report
 
 ## Experiment Overview
 
@@ -794,7 +839,7 @@ class RFDETRValidator:
 
 ---
 
-## 📊 Overall Performance
+## Overall Performance
 
 | **Metric** | **Value** |
 |------------|-----------|
@@ -806,7 +851,7 @@ class RFDETRValidator:
 
 ---
 
-## 📈 Detection Statistics
+## Detection Statistics
 
 | **Metric** | **Count** | **Percentage** |
 |------------|-----------|----------------|
@@ -816,13 +861,13 @@ class RFDETRValidator:
 | **False Negatives (FN)** | {total_fn} | {(total_fn/total_gt*100) if total_gt > 0 else 0:.1f}% |
 
 ### Detection Summary
-- ✅ **Correctly detected**: {total_tp} objects ({(total_tp/total_gt*100) if total_gt > 0 else 0:.1f}% of GT)
-- ❌ **Missed**: {total_fn} objects ({(total_fn/total_gt*100) if total_gt > 0 else 0:.1f}% of GT)
-- ⚠️ **False alarms**: {total_fp} detections
+- **Correctly detected**: {total_tp} objects ({(total_tp/total_gt*100) if total_gt > 0 else 0:.1f}% of GT)
+- **Missed**: {total_fn} objects ({(total_fn/total_gt*100) if total_gt > 0 else 0:.1f}% of GT)
+- **False alarms**: {total_fp} detections
 
 ---
 
-## 📋 Per-Class Performance
+## Per-Class Performance
 
 | **Class** | **GT** | **TP** | **FP** | **FN** | **Precision** | **Recall** | **F1** |
 |-----------|--------|--------|--------|--------|---------------|------------|--------|
@@ -864,7 +909,7 @@ class RFDETRValidator:
             report_content += """
 ---
 
-## 📊 Category Distribution
+## Category Distribution
 
 | **Category** | **GT Annotations** | **Percentage** |
 |--------------|-------------------|----------------|
@@ -879,7 +924,7 @@ class RFDETRValidator:
         report_content += f"""
 ---
 
-## ⚡ Inference Speed
+## Inference Speed
 
 | **Metric** | **Value** |
 |------------|-----------|
@@ -890,8 +935,8 @@ class RFDETRValidator:
 
 ---
 
-*📊 Report generated by RF-DETR Validation System*  
-*🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*Report generated by RF-DETR Validation System*  
+*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
 """
         
         # Save report

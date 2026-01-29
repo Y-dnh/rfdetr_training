@@ -67,7 +67,7 @@ setup_seed(42)
 
 # Configuration
 model_config = ModelConfig(
-    model_size="n",      # nano, small, medium, base, large
+    model_size="n",      # n, s, m, b, l, xl, 2xl
     num_classes=3,       # Auto-detected from dataset
 )
 
@@ -116,13 +116,13 @@ results = validator.validate(
 
 ### Dataset Format
 
-COCO-format annotations (Roboflow export compatible):
+Supports both **COCO** (Roboflow export) and **YOLO** formats with auto-detection:
 
+#### COCO Format
 ```
 dataset/
 ├── train/
 │   ├── image1.jpg
-│   ├── image2.jpg
 │   └── _annotations.coco.json
 ├── valid/
 │   └── _annotations.coco.json
@@ -167,11 +167,16 @@ rfdetr_training/
     │       ├── config.py         # Dataclass configurations
     │       └── seed.py           # Reproducibility
     │
-    ├── config.py                 # Original RF-DETR model configs
+    ├── platform/                 # 🔒 Platform-licensed models (PML-1.0)
+    │   └── models.py             # RFDETRXLarge, RFDETR2XLarge
+    │
+    ├── config.py                 # RF-DETR model configs (all sizes)
     ├── main.py                   # Original Model class
     ├── detr.py                   # DETR implementation
-    ├── models/                   # RF-DETR architecture (unchanged)
-    └── datasets/                 # Original datasets (unchanged)
+    ├── models/                   # RF-DETR architecture
+    └── datasets/                 # COCO & YOLO dataset loaders
+        ├── coco.py               # COCO format
+        └── yolo.py               # YOLO format (NEW)
 ```
 
 ### Module Responsibilities
@@ -272,19 +277,23 @@ V' = V × (1 ± hsv_v)
 
 ### Model Variants
 
-| Size | Resolution | Decoder Layers | Parameters |
-|------|------------|----------------|------------|
-| `n` (nano) | 384 | 2 | ~30.5M |
-| `s` (small) | 512 | 3 | ~32.1M |
-| `m` (medium) | 576 | 4 | ~33.7M |
-| `b` (base) | 560 | 3 | ~34M |
-| `l` (large) | 560 | 3 | ~50M |
+| Size | Resolution | Decoder Layers | Parameters | License |
+|------|------------|----------------|------------|---------|
+| `n` (nano) | 384×384 | 2 | ~30.5M | Apache-2.0 |
+| `s` (small) | 512×512 | 3 | ~32.1M | Apache-2.0 |
+| `m` (medium) | 576×576 | 4 | ~33.7M | Apache-2.0 |
+| `b` (base) | 560×560 | 3 | ~29M | Apache-2.0 |
+| `l` (large) | 704×704 | 4 | ~33.9M | Apache-2.0 |
+| `xl` (xlarge) | 700×700 | 5 | ~126.4M | ⚠️ PML-1.0 |
+| `2xl` (2xlarge) | 880×880 | 5 | ~126.9M | ⚠️ PML-1.0 |
+
+> ⚠️ **Note**: XLarge and 2XLarge models require `accept_platform_model_license=True` and an active Roboflow platform plan.
 
 ### ModelConfig
 
 ```python
 ModelConfig(
-    model_size="n",              # Model variant
+    model_size="n",              # Model variant: n, s, m, b, l, xl, 2xl
     num_classes=3,               # Auto-detected from dataset
     pretrained_weights=None,     # Path or None for HuggingFace
     freeze_encoder=False,        # Freeze DINOv2 backbone
@@ -581,7 +590,12 @@ DATASET_DIR = Path("path/to/dataset")
 
 ## 📜 License
 
-This project is a fork of [RF-DETR](https://github.com/roboflow/rf-detr) and is distributed under the [Apache 2.0 License](LICENSE).
+This project is a fork of [RF-DETR](https://github.com/roboflow/rf-detr) with dual licensing:
+
+- **Apache 2.0 License** — Core models (Nano, Small, Medium, Base, Large) and training pipeline
+- **Platform Model License 1.0** — XLarge and 2XLarge models require an active Roboflow platform plan
+
+See [LICENSE](LICENSE), [LICENSE.core](LICENSE.core), and [LICENSE.platform](LICENSE.platform) for details.
 
 ---
 
