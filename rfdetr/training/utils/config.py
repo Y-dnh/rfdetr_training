@@ -318,6 +318,59 @@ class ModelConfig:
         return cls(**{k: v for k, v in config_dict.items() if k in cls.__dataclass_fields__})
 
 
+@dataclass
+class ExportConfig:
+    """
+    Configuration for model export (ONNX, TensorRT).
+    
+    Attributes:
+        enabled: Whether to export model after training.
+        format: Export format ('onnx', 'tensorrt', 'both').
+        simplify: Simplify ONNX model using onnxsim.
+        opset_version: ONNX opset version.
+        dynamic_batch: Enable dynamic batch size.
+        half: Export model in FP16 (half precision).
+        batch_size: Batch size for export (static batch).
+        verbose: Verbose ONNX export.
+    """
+    enabled: bool = True               # Експортувати модель після тренування
+    format: str = 'onnx'               # Формат: 'onnx', 'tensorrt', 'both'
+    simplify: bool = True              # Спростити ONNX (onnxsim)
+    opset_version: int = 17            # ONNX opset версія
+    dynamic_batch: bool = False        # Динамічний batch size
+    half: bool = False                 # FP16 (половинна точність)
+    batch_size: int = 1                # Batch size для експорту
+    verbose: bool = False              # Детальний вивід
+    
+    def __post_init__(self):
+        """Validate configuration values."""
+        valid_formats = ['onnx', 'tensorrt', 'both']
+        if self.format not in valid_formats:
+            raise ValueError(f"format must be one of {valid_formats}, got {self.format}")
+        if self.opset_version < 11:
+            raise ValueError(f"opset_version must be >= 11, got {self.opset_version}")
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be > 0, got {self.batch_size}")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary."""
+        return {
+            'enabled': self.enabled,
+            'format': self.format,
+            'simplify': self.simplify,
+            'opset_version': self.opset_version,
+            'dynamic_batch': self.dynamic_batch,
+            'half': self.half,
+            'batch_size': self.batch_size,
+            'verbose': self.verbose,
+        }
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'ExportConfig':
+        """Create config from dictionary."""
+        return cls(**{k: v for k, v in config_dict.items() if k in cls.__dataclass_fields__})
+
+
 def validate_config(
     augmentation_config: Optional[AugmentationConfig] = None,
     training_config: Optional[TrainingConfig] = None,

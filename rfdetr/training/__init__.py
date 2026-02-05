@@ -13,6 +13,7 @@ from rfdetr.training.utils.config import (
     AugmentationConfig,
     TrainingConfig,
     ModelConfig,
+    ExportConfig,
     validate_config,
 )
 from rfdetr.training.dataset import RFDETRDataset, build_dataset, collate_fn
@@ -28,6 +29,7 @@ __all__ = [
     "AugmentationConfig",
     "TrainingConfig",
     "ModelConfig",
+    "ExportConfig",
     "validate_config",
     # Dataset
     "RFDETRDataset",

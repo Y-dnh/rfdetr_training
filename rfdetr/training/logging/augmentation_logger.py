@@ -166,6 +166,15 @@ class AugmentationLogger:
         
         save_path = self.save_dir / filename
         
+        def numpy_serializer(obj):
+            """Convert numpy types to JSON serializable."""
+            import numpy as np
+            if isinstance(obj, (np.integer, np.floating)):
+                return obj.item()
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        
         with open(save_path, 'w') as f:
             json.dump({
                 'metadata': {
@@ -174,7 +183,7 @@ class AugmentationLogger:
                     'saved_at': datetime.now().isoformat(),
                 },
                 'entries': self.entries,
-            }, f, indent=2)
+            }, f, indent=2, default=numpy_serializer)
         
         return save_path
     
@@ -240,6 +249,14 @@ class TrainingLogger:
     def error(self, message: str) -> None:
         """Log error message."""
         self.log(message, 'ERROR')
+    
+    def debug(self, message: str) -> None:
+        """Log debug message (file only, not to console)."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        formatted = f"[{timestamp}] [DEBUG] {message}"
+        
+        with open(self.log_file, 'a') as f:
+            f.write(formatted + '\n')
     
     def epoch_summary(
         self,

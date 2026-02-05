@@ -27,38 +27,38 @@ from rfdetr.training.utils.config import ModelConfig, TrainingConfig, Augmentati
 MODEL_CONFIGS = {
     'nano': {
         'size': 'n',
-        'batch_size': 2,
+        'batch_size': 16,
         'resolution': 384,
     },
     # 'small': {
     #     'size': 's',
-    #     'batch_size': 1,
+    #     'batch_size': 16,
     #     'resolution': 512,
     # },
     # 'medium': {
     #     'size': 'm',
-    #     'batch_size': 1,
+    #     'batch_size': 8,
     #     'resolution': 576,
     # },
     # 'base': {
     #     'size': 'b',
-    #     'batch_size': 1,
+    #     'batch_size': 8,
     #     'resolution': 560,
     # },
     # 'large': {
     #     'size': 'l',
-    #     ba
+    #     'batch_size': 4,
     #     'resolution': 704,
     # },
     # 'xlarge': {
     #     'size': 'xl',
-    #     'batch_size': 1,
+    #     'batch_size': 2,
     #     'resolution': 700,
     #     'accept_platform_license': True,
     # },
     # '2xlarge': {
     #     'size': '2xl',
-    #     'batch_size': 1,
+    #     'batch_size': 2,
     #     'resolution': 880,
     #     'accept_platform_license': True,
     # },
@@ -83,7 +83,7 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
     
     # Training config - 2 epochs
     training_config = TrainingConfig(
-        epochs=4,
+        epochs=1,
         batch_size=config['batch_size'],
         workers=2, 
         lr=1e-4,
@@ -96,14 +96,35 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
         exist_ok=True,
     )
     
-    # Augmentation config - close mosaic at epoch 1
     aug_config = AugmentationConfig(
-        imgsz=config['resolution'],
-        mosaic=0.8,
-        mixup=0.1,
-        degrees=10,
-        close_mosaic=2,  # Close mosaic at epoch 2
-    )
+
+    hsv_h=0.0,                       
+    hsv_s=0.0,                       
+    hsv_v=0.4,                       
+    
+    brightness=0.2,                  
+    contrast=0.2,                    
+    blur=0.1,                        
+    noise=0.0,                       
+    
+    degrees=10.0,                    
+    translate=0.1,                   
+    scale=0.0,                       
+    shear=0.0,                       
+    perspective=0.0,                    
+    fliplr=0.5,                      
+    flipud=0.0,                       
+    mosaic=1.0,                      
+    mixup=0.0,                       
+    cutmix=0.0,                          
+    cutmix_min_visible=0.3,              
+    cutmix_min_box_size=10,          
+    close_mosaic=19,                 
+    
+    erasing=0.25,                     
+    erasing_min_visible=0.5,          
+    erasing_min_box_size=20,   
+)      
     
     print(f"Model size: {config['size']}")
     print(f"Resolution: {config['resolution']}")
@@ -144,8 +165,8 @@ def main():
     print(f"Epochs: 2, Close mosaic: epoch 1")
     print("=" * 80)
     
-    dataset_dir = project_root / "test_dataset"
-    output_base = project_root / "runs"
+    dataset_dir = project_root / "tests" / "test_dataset"
+    output_base = project_root / "tests" / "runs"
     
     if not dataset_dir.exists():
         print(f"ERROR: Dataset not found at {dataset_dir}")

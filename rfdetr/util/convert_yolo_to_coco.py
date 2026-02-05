@@ -4,33 +4,46 @@ Convert YOLO format annotations to COCO JSON format.
 Usage:
     python -m rfdetr.util.convert_yolo_to_coco --labels path/to/labels --images path/to/images
     
-    # Or from util directory:
-    python convert_yolo_to_coco.py --labels ../../dataset/test/labels --images ../../dataset/test/images
+    # With output directory and image copying:
+    python -m rfdetr.util.convert_yolo_to_coco --labels path/to/labels --images path/to/images --output-dir path/to/output --copy-images
 """
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from PIL import Image
 
 
-def yolo_to_coco(labels_dir: str, images_dir: str, output_name: str = "_annotations.coco.json"):
+def yolo_to_coco(
+    labels_dir: str, 
+    images_dir: str, 
+    output_name: str = "_annotations.coco.json",
+    output_dir: str | None = None,
+    copy_images: bool = False
+):
     """
     Convert YOLO format labels to COCO JSON format.
     
     Args:
         labels_dir: Path to folder with .txt YOLO labels
-        images_dir: Path to folder with images (output will be saved here)
+        images_dir: Path to folder with images
         output_name: Name of output JSON file
+        output_dir: Path to output folder (if None, saves to images_dir)
+        copy_images: If True, copy images to output_dir
     """
     
     labels_path = Path(labels_dir)
     images_path = Path(images_dir)
+    out_path = Path(output_dir) if output_dir else images_path
     
     if not labels_path.exists():
         raise FileNotFoundError(f"Labels directory not found: {labels_path}")
     if not images_path.exists():
         raise FileNotFoundError(f"Images directory not found: {images_path}")
+    
+    # Create output directory if needed
+    out_path.mkdir(parents=True, exist_ok=True)
     
     # COCO format structure
     coco = {
@@ -83,6 +96,10 @@ def yolo_to_coco(labels_dir: str, images_dir: str, output_name: str = "_annotati
             print(f"Error reading {image_file}: {e}")
             continue
         
+        # Copy image if requested
+        if copy_images and output_dir:
+            shutil.copy2(image_file, out_path / image_file.name)
+        
         # Add image entry
         coco["images"].append({
             "id": image_id,
@@ -120,12 +137,14 @@ def yolo_to_coco(labels_dir: str, images_dir: str, output_name: str = "_annotati
         image_id += 1
     
     # Save COCO JSON
-    output_file = images_path / output_name
+    output_file = out_path / output_name
     with open(output_file, 'w') as f:
         json.dump(coco, f, indent=2)
     
     print(f"Saved: {output_file}")
     print(f"Images: {len(coco['images'])}, Annotations: {len(coco['annotations'])}, Categories: {len(coco['categories'])}")
+    if copy_images and output_dir:
+        print(f"Copied {len(coco['images'])} images to {out_path}")
     
     return output_file
 
@@ -133,19 +152,19 @@ def yolo_to_coco(labels_dir: str, images_dir: str, output_name: str = "_annotati
 def main():
     parser = argparse.ArgumentParser(description="Convert YOLO annotations to COCO JSON format")
     parser.add_argument("--labels", "-l", required=True, help="Path to YOLO labels folder")
-    parser.add_argument("--images", "-i", required=True, help="Path to images folder (output saved here)")
+    parser.add_argument("--images", "-i", required=True, help="Path to images folder")
     parser.add_argument("--output", "-o", default="_annotations.coco.json", help="Output filename")
+    parser.add_argument("--output-dir", "-d", default=None, help="Output directory (default: same as images)")
+    parser.add_argument("--copy-images", "-c", action="store_true", help="Copy images to output directory")
     
     args = parser.parse_args()
-    yolo_to_coco(args.labels, args.images, args.output)
+    yolo_to_coco(args.labels, args.images, args.output, args.output_dir, args.copy_images)
 
 
 if __name__ == "__main__":
     import sys
     
-    # ============================================================
-    # QUICK RUN: Change PATH below and run file directly in IDE
-    # ============================================================
+
     PATH = "dataset/test"  # <- Change this! e.g. "dataset/train", "dataset/valid"
     # ============================================================
     

@@ -68,6 +68,7 @@ class AugmentationPipeline:
         # Current epoch (for close_mosaic)
         self._current_epoch = 0
         self._total_epochs = 100
+        self._mosaic_was_enabled = None  # Track mosaic state for one-time message
         
         # Build transforms
         self._build_transforms()
@@ -191,12 +192,21 @@ class AugmentationPipeline:
         if total_epochs is not None:
             self._total_epochs = total_epochs
         
-        # Debug: log mosaic status change
+        # One-time mosaic status message
         if self.is_train:
-            remaining = self._total_epochs - self._current_epoch
-            mosaic_on = remaining > self.config.close_mosaic
-            if not mosaic_on:
-                print(f"[Pipeline] Epoch {epoch}: Mosaic DISABLED (remaining={remaining} <= close_mosaic={self.config.close_mosaic})")
+            mosaic_enabled = self._should_apply_mosaic() and self.config.mosaic > 0
+            
+            # First epoch - check if mosaic is disabled from the start
+            if self._mosaic_was_enabled is None:
+                self._mosaic_was_enabled = mosaic_enabled
+                if not mosaic_enabled:
+                    print(f"Mosaic: disabled (close_mosaic={self.config.close_mosaic})")
+            # Mosaic was enabled but now disabled
+            elif self._mosaic_was_enabled and not mosaic_enabled:
+                self._mosaic_was_enabled = False
+                remaining = self._total_epochs - self._current_epoch
+                print(f"Mosaic: disabled at epoch {epoch} (remaining={remaining})")
+        
     
     def _should_apply_mosaic(self) -> bool:
         """Check if mosaic should be applied based on close_mosaic."""

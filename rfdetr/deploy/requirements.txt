@@ -6,3 +6,6 @@ onnxruntime-gpu
 onnx_graphsurgeon
 tensorrt>=8.6.1
 polygraphy
+onnx_graphsurgeon
+onnxruntime
+onnxscript

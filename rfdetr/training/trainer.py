@@ -15,6 +15,7 @@ import json
 import time
 import datetime
 import argparse
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -31,6 +32,7 @@ from rfdetr.training.utils.config import (
     AugmentationConfig,
     TrainingConfig,
     ModelConfig,
+    ExportConfig,
     validate_config,
 )
 from rfdetr.training.utils.seed import setup_seed, worker_init_fn
@@ -69,12 +71,14 @@ class RFDETRTrainer:
         model_config: Optional[ModelConfig] = None,
         training_config: Optional[TrainingConfig] = None,
         augmentation_config: Optional[AugmentationConfig] = None,
+        export_config: Optional[ExportConfig] = None,
         seed: int = 42,
     ):
         """Initialize trainer."""
         self.model_config = model_config or ModelConfig()
         self.training_config = training_config or TrainingConfig()
         self.augmentation_config = augmentation_config or AugmentationConfig()
+        self.export_config = export_config or ExportConfig()
         self.seed = seed
         
         # Validate configs
@@ -341,6 +345,9 @@ class RFDETRTrainer:
         self.metrics_logger = MetricsLogger(self.save_dir)
         self.aug_logger = AugmentationLogger(self.save_dir)
         
+        # Suppress torch.meshgrid warning
+        warnings.filterwarnings("ignore", message="torch.meshgrid: in an upcoming release")
+        
         self.training_logger.info(f"Starting training in {self.save_dir}")
         self.training_logger.info(f"Seed: {self.seed}")
         self.training_logger.info(f"Batch size: {self.training_config.batch_size}, Grid size: {self.grid_size}x{self.grid_size}")
@@ -370,6 +377,7 @@ class RFDETRTrainer:
         # Setup dataloaders with YOLO-style augmentations
         self.training_logger.info("Loading datasets with augmentations...")
         num_classes = self._setup_custom_dataloaders(dataset_dir)
+        self.num_classes = num_classes  # Store for running metrics
         self.training_logger.info(f"Train: {len(self.train_dataset)} images, Val: {len(self.val_dataset)} images")
         self.training_logger.info(f"Classes: {num_classes} - {self.class_names}")
         
@@ -453,10 +461,16 @@ class RFDETRTrainer:
         # Generate final visualizations
         self._generate_final_visualizations()
         
+        # Export ONNX if enabled
+        onnx_path = None
+        if self.export_config.enabled:
+            onnx_path = self._export_onnx()
+        
         return {
             'save_dir': str(self.save_dir),
             'best_map': self.best_map,
             'epochs_trained': self.current_epoch + 1,
+            'onnx_path': onnx_path,
         }
     
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
@@ -473,7 +487,7 @@ class RFDETRTrainer:
 
         # Header for progress bar
         print(("%10s" * 7) % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss", "Instances", "Size"))
-        pbar = tqdm(self.train_loader, total=num_batches, bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]')
+        pbar = tqdm(self.train_loader, total=num_batches, bar_format='{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
         
         for batch_idx, batch_data in enumerate(pbar):
             images, targets, aug_logs = batch_data
@@ -545,7 +559,9 @@ class RFDETRTrainer:
         }
     
     def _validate_epoch(self, epoch: int, save_last: bool = False) -> Dict[str, float]:
-        """Validate for one epoch."""
+        """Validate for one epoch with Ultralytics-style progress bar."""
+        import contextlib
+        import os
         from rfdetr.util.misc import NestedTensor
         from rfdetr.datasets.coco_eval import CocoEvaluator
         from rfdetr.datasets import get_coco_api_from_dataset
@@ -567,9 +583,31 @@ class RFDETRTrainer:
         saved_batches = 0
         max_batches_to_save = self.training_config.vis_batches
         
+        # Get image size from first batch
+        img_size = self.augmentation_config.imgsz if self.augmentation_config else 640
+        
+        # Count total images and instances
+        total_images = len(self.val_dataset)
+        total_instances = 0
+        
+        # Validation header (same style as training)
+        print(("%10s" * 2 + "%10s" * 6) % ("", "GPU_mem", "Class", "Instances", "P", "R", "mAP50", "mAP50-95"))
+        
+        # Validation progress bar (leave=False so we can overwrite with final metrics)
+        val_pbar = tqdm(
+            self.val_loader, 
+            total=num_batches, 
+            bar_format='{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]',
+            leave=False
+        )
+        
         with torch.no_grad():
-            for batch_idx, batch_data in enumerate(self.val_loader):
+            for batch_idx, batch_data in enumerate(val_pbar):
                 images, targets, _ = batch_data
+                
+                # Count instances
+                for t in targets:
+                    total_instances += len(t['boxes'])
                 
                 # Move to device
                 images = images.to(self.device)
@@ -609,16 +647,40 @@ class RFDETRTrainer:
                 
                 # Accumulate predictions for confusion matrix
                 self._accumulate_predictions(targets, results)
+                
+                # Update progress bar (metrics will be shown after completion)
+                mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
+                desc = ("%10s" * 2 + "%10s" * 6) % ("val", mem, "-", "-", "-", "-", "-", "-")
+                val_pbar.set_description(desc)
         
-        # Run COCO evaluation
+        val_pbar.close()
+        
+        # Run COCO evaluation (silently - suppress pycocotools output)
         coco_evaluator.synchronize_between_processes()
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
+        with open(os.devnull, 'w') as devnull:
+            with contextlib.redirect_stdout(devnull):
+                coco_evaluator.accumulate()
+                coco_evaluator.summarize()
         
         # Extract metrics
         stats = coco_evaluator.coco_eval['bbox'].stats
         mAP50_95 = stats[0]
         mAP50 = stats[1]
+        precision = stats[0]  # Use mAP50-95 as proxy for precision
+        recall = stats[8] if len(stats) > 8 else mAP50  # AR@100
+        
+        # Print final metrics (same format as progress bar description, no header - already printed)
+        mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
+        print(("%10s" * 2 + "%10s" + "%10d" + "%10.4f" * 4) % (
+            "val",
+            mem,
+            "all",
+            total_instances,
+            precision,
+            recall,
+            mAP50,
+            mAP50_95
+        ))
         
         return {
             'val/box_loss': total_loss_bbox / num_batches,
@@ -626,8 +688,8 @@ class RFDETRTrainer:
             'val/dfl_loss': total_loss_giou / num_batches,
             'metrics/mAP50': mAP50,
             'metrics/mAP50-95': mAP50_95,
-            'metrics/precision': mAP50,
-            'metrics/recall': stats[8] if len(stats) > 8 else mAP50,
+            'metrics/precision': precision,
+            'metrics/recall': recall,
         }
     
     def _save_train_batches_with_aug(self) -> None:
@@ -869,11 +931,11 @@ class RFDETRTrainer:
             batch_size = min(len(images_cpu), self.training_config.batch_size)
             
             # Get raw predictions (normalized cxcywh format, same as labels)
-            # Debug: print output structure
+            # Debug info (file only)
             if batch_idx == 0:
-                self.training_logger.info(f"[DEBUG] outputs_raw keys: {outputs_raw.keys()}")
-                self.training_logger.info(f"[DEBUG] pred_logits shape: {outputs_raw['pred_logits'].shape}")
-                self.training_logger.info(f"[DEBUG] pred_boxes shape: {outputs_raw['pred_boxes'].shape}")
+                self.training_logger.debug(f"outputs_raw keys: {outputs_raw.keys()}")
+                self.training_logger.debug(f"pred_logits shape: {outputs_raw['pred_logits'].shape}")
+                self.training_logger.debug(f"pred_boxes shape: {outputs_raw['pred_boxes'].shape}")
             
             pred_logits = outputs_raw['pred_logits'].cpu()  # [B, num_queries, num_classes]
             pred_boxes_raw = outputs_raw['pred_boxes'].cpu()  # [B, num_queries, 4] normalized cxcywh
@@ -901,12 +963,12 @@ class RFDETRTrainer:
                 gt_boxes = target['boxes'].cpu()
                 gt_labels = target['labels'].cpu()
                 
-                # Debug: print GT boxes info for first image
+                # Debug GT boxes info (file only)
                 if i == 0 and batch_idx == 0 and len(gt_boxes) > 0:
-                    self.training_logger.info(f"[DEBUG] GT boxes shape: {gt_boxes.shape}")
-                    self.training_logger.info(f"[DEBUG] GT boxes range: [{gt_boxes.min():.4f}, {gt_boxes.max():.4f}]")
+                    self.training_logger.debug(f"GT boxes shape: {gt_boxes.shape}")
+                    self.training_logger.debug(f"GT boxes range: [{gt_boxes.min():.4f}, {gt_boxes.max():.4f}]")
                     for j, (box, lbl) in enumerate(zip(gt_boxes[:3], gt_labels[:3])):
-                        self.training_logger.info(f"[DEBUG]   GT Box {j}: cx={box[0]:.4f}, cy={box[1]:.4f}, w={box[2]:.4f}, h={box[3]:.4f}, label={lbl}")
+                        self.training_logger.debug(f"  GT Box {j}: cx={box[0]:.4f}, cy={box[1]:.4f}, w={box[2]:.4f}, h={box[3]:.4f}, label={lbl}")
                 
                 for box, label in zip(gt_boxes, gt_labels):
                     # Boxes are in normalized cxcywh format
@@ -946,16 +1008,16 @@ class RFDETRTrainer:
                     pred_labels = pred_labels[topk.indices]
                     pred_scores = topk.values
                 
-                # Debug: print first image's prediction info
+                # Debug predictions info (file only)
                 if i == 0 and batch_idx == 0:
-                    self.training_logger.info(f"[DEBUG] Pred boxes raw shape: {boxes_i.shape}")
-                    self.training_logger.info(f"[DEBUG] Pred boxes range: [{boxes_i.min():.4f}, {boxes_i.max():.4f}]")
-                    self.training_logger.info(f"[DEBUG] Scores range: [{scores.min():.4f}, {scores.max():.4f}]")
-                    self.training_logger.info(f"[DEBUG] Num predictions > 0.5: {(scores > 0.5).sum()}")
+                    self.training_logger.debug(f"Pred boxes raw shape: {boxes_i.shape}")
+                    self.training_logger.debug(f"Pred boxes range: [{boxes_i.min():.4f}, {boxes_i.max():.4f}]")
+                    self.training_logger.debug(f"Scores range: [{scores.min():.4f}, {scores.max():.4f}]")
+                    self.training_logger.debug(f"Num predictions > 0.5: {(scores > 0.5).sum()}")
                     if len(pred_scores) > 0:
-                        self.training_logger.info(f"[DEBUG] Drawing {len(pred_scores)} boxes")
+                        self.training_logger.debug(f"Drawing {len(pred_scores)} boxes")
                         for j, (box, sc) in enumerate(zip(pred_boxes[:3], pred_scores[:3])):
-                            self.training_logger.info(f"[DEBUG]   Box {j}: cx={box[0]:.4f}, cy={box[1]:.4f}, w={box[2]:.4f}, h={box[3]:.4f}, score={sc:.4f}")
+                            self.training_logger.debug(f"  Box {j}: cx={box[0]:.4f}, cy={box[1]:.4f}, w={box[2]:.4f}, h={box[3]:.4f}, score={sc:.4f}")
                 
                 for box, label, score in zip(pred_boxes, pred_labels, pred_scores):
                     # Boxes are in normalized cxcywh format (same as labels)
@@ -1219,15 +1281,9 @@ class RFDETRTrainer:
             self.training_logger.warning(f"Failed to generate curves: {e}")
     
     def _log_epoch_summary(self, epoch: int, metrics: Dict[str, float], epoch_time: float) -> None:
-        """Log epoch summary."""
-        self.training_logger.info(
-            f"Epoch {epoch+1}/{self.training_config.epochs} - "
-            f"train_loss: {metrics.get('train/box_loss', 0):.4f} - "
-            f"val_loss: {metrics.get('val/box_loss', 0):.4f} - "
-            f"mAP50: {metrics.get('metrics/mAP50', 0):.4f} - "
-            f"mAP50-95: {metrics.get('metrics/mAP50-95', 0):.4f} - "
-            f"time: {epoch_time:.1f}s"
-        )
+        """Log epoch summary (to file only, console output is handled by progress bars)."""
+        # Only log to file, not to console (to avoid duplicating tqdm output)
+        pass
     
     def _save_checkpoint(self, epoch: int, metrics: Dict[str, float]) -> None:
         """Save training checkpoint."""
@@ -1248,7 +1304,7 @@ class RFDETRTrainer:
         if current_map > self.best_map:
             self.best_map = current_map
             torch.save(checkpoint, self.save_dir / 'weights' / 'best.pt')
-            self.training_logger.info(f"New best mAP: {self.best_map:.4f}")
+            self.training_logger.debug(f"New best mAP: {self.best_map:.4f}")
     
     def _load_checkpoint(self, path: str) -> None:
         """Load training checkpoint."""
@@ -1285,8 +1341,55 @@ class RFDETRTrainer:
             'model': self.model_config.to_dict(),
             'training': self.training_config.to_dict(),
             'augmentation': self.augmentation_config.to_dict(),
+            'export': self.export_config.to_dict(),
             'seed': self.seed,
         }
         
         with open(self.save_dir / 'config.json', 'w') as f:
             json.dump(configs, f, indent=2)
+    
+    def _export_onnx(self) -> Optional[str]:
+        """Export best model to ONNX format using rfdetr.deploy.export module."""
+        try:
+            from rfdetr.deploy.export import export_from_checkpoint
+            
+            self.training_logger.info("Exporting best model to ONNX...")
+            
+            # Get resolution from model config
+            model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 576, 'l': 704, 'xl': 700, '2xl': 880}
+            resolution = model_resolutions.get(self.model_config.model_size, 640)
+            
+            # Find checkpoint
+            best_path = self.save_dir / 'weights' / 'best.pt'
+            if not best_path.exists():
+                self.training_logger.warning("Best checkpoint not found, using last checkpoint")
+                best_path = self.save_dir / 'weights' / 'last.pt'
+            
+            if not best_path.exists():
+                self.training_logger.error("No checkpoint found for ONNX export")
+                return None
+            
+            # Export using module function
+            output_file = export_from_checkpoint(
+                model=self.model,
+                checkpoint_path=str(best_path),
+                output_dir=str(self.save_dir / 'weights'),
+                resolution=resolution,
+                batch_size=self.export_config.batch_size,
+                simplify=self.export_config.simplify,
+                opset_version=self.export_config.opset_version,
+                dynamic_batch=self.export_config.dynamic_batch,
+                verbose=self.export_config.verbose,
+            )
+            
+            self.training_logger.info(f"ONNX model exported to: {output_file}")
+            return output_file
+            
+        except ImportError as e:
+            self.training_logger.warning(f"ONNX export skipped - missing dependencies: {e}")
+            return None
+        except Exception as e:
+            self.training_logger.error(f"ONNX export failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

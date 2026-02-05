@@ -19,6 +19,7 @@ from rfdetr.training import (
     AugmentationConfig,
     TrainingConfig,
     ModelConfig,
+    ExportConfig,
     RFDETRTrainer,
 )
 
@@ -41,11 +42,12 @@ PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для заван�
 # КОНФІГУРАЦІЯ МОДЕЛІ
 # =============================================================================
 MODEL_CONFIG = ModelConfig(
-    model_size="n",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large, xl=xlarge, 2xl=2xlarge
+    model_size="2xl",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large, xl=xlarge, 2xl=2xlarge
     num_classes=3,                  # Кількість класів (автовизначається з датасету)
     pretrained_weights=PRETRAINED_WEIGHTS,  # Шлях до попередньо навчених ваг
     freeze_encoder=False,           # Заморозити encoder (DINOv2 backbone)
     freeze_encoder_epochs=0,        # Кількість епох з замороженим encoder (0 = не заморожувати)
+    accept_platform_license=True,   # Потрібно для xl/2xl (Platform Model License 1.0)
 )
 
 
@@ -57,14 +59,14 @@ TRAINING_CONFIG = TrainingConfig(
     # Налаштування проекту
     # -------------------------------------------------------------------------
     project=f"runs/{PROJECT_NAME}",  # Папка для збереження результатів
-    name="exp",                      # Назва run: створює exp, exp2, exp3, ...
+    name="rfdetr_2xl_for_autolabeling",                      # Назва run: створює exp, exp2, exp3, ...
     exist_ok=False,                  # True = перезаписати існуючий run
     
     # -------------------------------------------------------------------------
     # Основні параметри навчання
     # -------------------------------------------------------------------------
-    epochs=10,                       # Кількість епох тренування
-    batch_size=8,                    # Розмір батчу (зменшіть якщо мало GPU пам'яті)
+    epochs=30,                       # Кількість епох тренування
+    batch_size=2,                    # Розмір батчу (зменшіть якщо мало GPU пам'яті)
     
     # -------------------------------------------------------------------------
     # Оптимізатор (AdamW)
@@ -89,18 +91,18 @@ TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
     val_period=1,                    # Валідація кожні N епох
     save_period=-1,                  # Збереження checkpoint кожні N епох (-1 = тільки best/last)
-    early_stopping=50,               # Зупинка якщо метрика не покращується N епох (0 = вимкнено)
+    early_stopping=10,               # Зупинка якщо метрика не покращується N епох (0 = вимкнено)
     
     # -------------------------------------------------------------------------
     # Візуалізації
     # -------------------------------------------------------------------------
-    vis_batches=50,                   # Кількість батчів для візуалізації (train/val)
+    vis_batches=10,                   # Кількість батчів для візуалізації (train/val)
     
     # -------------------------------------------------------------------------
     # Device та workers
     # -------------------------------------------------------------------------
     device="cuda",                   # Пристрій: "cuda" або "cpu"
-    workers=8,                       # DataLoader workers (0 для Windows сумісності)
+    workers=2,                       # DataLoader workers (0 для Windows сумісності)
 )
 
 
@@ -147,12 +149,12 @@ AUGMENTATION_CONFIG = AugmentationConfig(
     # -------------------------------------------------------------------------
     # Композитні аугментації (об'єднання кількох зображень)
     # -------------------------------------------------------------------------
-    mosaic=1.0,                      # Ймовірність Mosaic (4 зображення в одне)
-    mixup=0.3,                       # Ймовірність MixUp (альфа-блендинг 2 зображень)
-    cutmix=0.3,                      # Ймовірність CutMix (вирізання регіонів)
+    mosaic=0.0,                      # Ймовірність Mosaic (4 зображення в одне)
+    mixup=0.0,                       # Ймовірність MixUp (альфа-блендинг 2 зображень)
+    cutmix=0.0,                      # Ймовірність CutMix (вирізання регіонів)
     cutmix_min_visible=0.3,          # CutMix: мін. видима частина боксу (0.3 = 30%)
     cutmix_min_box_size=10,          # CutMix: мін. розмір боксу після обрізання (пікселі)
-    close_mosaic=5,                 # Вимкнути Mosaic в останніх N епохах
+    close_mosaic=5,                  # Вимкнути Mosaic в останніх N епохах
     
     # -------------------------------------------------------------------------
     # Random Erasing (видалення випадкових регіонів)
@@ -161,6 +163,36 @@ AUGMENTATION_CONFIG = AugmentationConfig(
     erasing=0.25,                     # Ймовірність Random Erasing (0-1)
     erasing_min_visible=0.5,          # Мін. видима частина боксу (0.5 = 50% має залишитись)
     erasing_min_box_size=20,          # Мін. розмір боксу після erasing (пікселі)
+)
+
+
+# =============================================================================
+# КОНФІГУРАЦІЯ ЕКСПОРТУ (ONNX / TensorRT)
+# =============================================================================
+EXPORT_CONFIG = ExportConfig(
+    # -------------------------------------------------------------------------
+    # Основні налаштування
+    # -------------------------------------------------------------------------
+    enabled=True,                     # Експортувати модель після тренування
+    format='onnx',                    # Формат: 'onnx', 'tensorrt', 'both'
+    
+    # -------------------------------------------------------------------------
+    # ONNX налаштування
+    # -------------------------------------------------------------------------
+    simplify=True,                    # Спростити ONNX за допомогою onnxsim
+    opset_version=17,                 # ONNX opset версія (рекомендовано: 17)
+    
+    # -------------------------------------------------------------------------
+    # Batch та точність
+    # -------------------------------------------------------------------------
+    dynamic_batch=False,              # Динамічний batch size (для різних batch при інференсі)
+    batch_size=1,                     # Batch size для експорту (якщо dynamic_batch=False)
+    half=False,                       # FP16 експорт (половинна точність)
+    
+    # -------------------------------------------------------------------------
+    # Інше
+    # -------------------------------------------------------------------------
+    verbose=False,                    # Детальний вивід ONNX експорту
 )
 
 
@@ -199,6 +231,7 @@ def main():
         model_config=MODEL_CONFIG,
         training_config=TRAINING_CONFIG,
         augmentation_config=AUGMENTATION_CONFIG,
+        export_config=EXPORT_CONFIG,
         seed=SEED,
     )
     
@@ -212,6 +245,8 @@ def main():
     print(f"Результати збережено: {results['save_dir']}")
     print(f"Best mAP: {results['best_map']:.4f}")
     print(f"Epochs trained: {results['epochs_trained']}")
+    if results.get('onnx_path'):
+        print(f"ONNX model: {results['onnx_path']}")
     print("=" * 70 + "\n")
     
     return results
@@ -230,6 +265,7 @@ def resume_training(checkpoint_path: str):
         model_config=MODEL_CONFIG,
         training_config=TRAINING_CONFIG,
         augmentation_config=AUGMENTATION_CONFIG,
+        export_config=EXPORT_CONFIG,
         seed=SEED,
     )
     

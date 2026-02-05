@@ -89,12 +89,15 @@ def gen_encoder_output_proposals(memory, memory_padding_mask, spatial_shapes, un
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
         else:
-            valid_H = torch.tensor([H_ for _ in range(N_)], device=memory.device)
-            valid_W = torch.tensor([W_ for _ in range(N_)], device=memory.device)
+            # Use torch.full for torch.export compatibility (avoids list comprehension)
+            valid_H = torch.full((N_,), H_, dtype=torch.long, device=memory.device)
+            valid_W = torch.full((N_,), W_, dtype=torch.long, device=memory.device)
 
-        grid_y, grid_x = torch.meshgrid(torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
-                                        torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device))
-        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1) # H_, W_, 2
+        # Use arange instead of linspace for torch.export compatibility (linspace steps require concrete int)
+        grid_y = torch.arange(H_, dtype=torch.float32, device=memory.device)
+        grid_x = torch.arange(W_, dtype=torch.float32, device=memory.device)
+        grid_y, grid_x = torch.meshgrid(grid_y, grid_x, indexing='ij')
+        grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # H_, W_, 2
 
         scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
         grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale

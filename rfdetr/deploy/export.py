@@ -24,7 +24,6 @@ from PIL import Image
 
 import rfdetr.datasets.transforms as T
 import rfdetr.util.misc as utils
-from rfdetr.deploy._onnx import OnnxOptimizer
 from rfdetr.models import build_model
 
 
@@ -95,11 +94,18 @@ def onnx_simplify(onnx_dir:str, input_names, input_tensors, force=False):
         input_tensors = [input_tensors]
 
     print(f'start simplify ONNX model: {onnx_dir}')
-    opt = OnnxOptimizer(onnx_dir)
-    opt.info('Model: original')
-    opt.common_opt()
-    opt.info('Model: optimized')
-    opt.save_onnx(sim_onnx_dir)
+    
+    # Try to use OnnxOptimizer if available (may fail due to onnx version incompatibility)
+    try:
+        from rfdetr.deploy._onnx import OnnxOptimizer
+        opt = OnnxOptimizer(onnx_dir)
+        opt.info('Model: original')
+        opt.common_opt()
+        opt.info('Model: optimized')
+        opt.save_onnx(sim_onnx_dir)
+    except (ImportError, AttributeError) as e:
+        print(f'OnnxOptimizer not available ({e}), using onnxsim only')
+    
     input_dict = {name: tensor.detach().cpu().numpy() for name, tensor in zip(input_names, input_tensors)}
     model_opt, check_ok = onnxsim.simplify(
         onnx_dir,
@@ -196,6 +202,98 @@ def no_batch_norm(model):
     for module in model.modules():
         if isinstance(module, nn.BatchNorm2d):
             raise ValueError("BatchNorm2d found in the model. Please remove it.")
+
+
+def export_from_checkpoint(
+    model: nn.Module,
+    checkpoint_path: str,
+    output_dir: str,
+    resolution: int = 640,
+    batch_size: int = 1,
+    simplify: bool = True,
+    opset_version: int = 17,
+    dynamic_batch: bool = False,
+    verbose: bool = False,
+) -> str:
+    """
+    Export model to ONNX from checkpoint.
+    
+    Args:
+        model: PyTorch model (will be deep copied)
+        checkpoint_path: Path to checkpoint file (.pt)
+        output_dir: Directory to save ONNX model
+        resolution: Input image resolution
+        batch_size: Batch size for export
+        simplify: Whether to simplify ONNX model
+        opset_version: ONNX opset version
+        dynamic_batch: Enable dynamic batch size
+        verbose: Verbose ONNX export
+    
+    Returns:
+        Path to exported ONNX file
+    """
+    import copy
+    
+    # Create a copy of model for export
+    export_model = copy.deepcopy(model)
+    
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    export_model.load_state_dict(checkpoint['model'])
+    export_model.eval()
+    export_model.cpu()
+    
+    # Create input tensor
+    input_tensors = make_infer_image(
+        infer_dir=None,
+        shape=(resolution, resolution),
+        batch_size=batch_size,
+        device='cpu'
+    )
+    
+    # Define export parameters
+    input_names = ['input']
+    output_names = ['dets', 'labels']
+    
+    # Dynamic axes for dynamic batch
+    dynamic_axes = None
+    if dynamic_batch:
+        dynamic_axes = {
+            'input': {0: 'batch'},
+            'dets': {0: 'batch'},
+            'labels': {0: 'batch'}
+        }
+    
+    # Export to ONNX
+    output_file = export_onnx(
+        output_dir=output_dir,
+        model=export_model,
+        input_names=input_names,
+        input_tensors=input_tensors,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        backbone_only=False,
+        verbose=verbose,
+        opset_version=opset_version
+    )
+    
+    # Simplify ONNX if requested
+    if simplify:
+        try:
+            output_file = onnx_simplify(
+                onnx_dir=output_file,
+                input_names=input_names,
+                input_tensors=input_tensors,
+                force=True
+            )
+        except Exception as e:
+            print(f"ONNX simplification failed: {e}")
+    
+    # Clean up
+    del export_model
+    
+    return output_file
+
 
 def main(args):
     print("git:\n  {}\n".format(utils.get_sha()))
