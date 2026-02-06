@@ -299,17 +299,41 @@ def build_dataset(
     dataset_dir = Path(dataset_dir)
     
     split_dir = dataset_dir / split
-    ann_file = split_dir / '_annotations.coco.json'
     
     if not split_dir.exists():
         raise ValueError(f"Split directory not found: {split_dir}")
+    
+    # Auto-detect dataset structure:
+    #   1) split/_annotations.coco.json        (images directly in split/)
+    #   2) split/<subdir>/_annotations.coco.json  (images in subdir, e.g. images/, img/, ...)
+    ann_file = split_dir / '_annotations.coco.json'
+    img_folder = split_dir
+    
     if not ann_file.exists():
-        raise ValueError(f"Annotation file not found: {ann_file}")
+        # Search subdirectories for _annotations.coco.json
+        found = None
+        for subdir in sorted(split_dir.iterdir()):
+            if subdir.is_dir():
+                candidate = subdir / '_annotations.coco.json'
+                if candidate.exists():
+                    found = candidate
+                    break
+        
+        if found is not None:
+            ann_file = found
+            img_folder = found.parent
+        else:
+            raise ValueError(
+                f"Annotation file '_annotations.coco.json' not found in:\n"
+                f"  {split_dir}\n"
+                f"  {split_dir}/<subdirectories>\n"
+                f"  Make sure the dataset has COCO annotations."
+            )
     
     is_train = split == 'train'
     
     return RFDETRDataset(
-        img_folder=split_dir,
+        img_folder=img_folder,
         ann_file=ann_file,
         augmentation_config=augmentation_config,
         is_train=is_train,

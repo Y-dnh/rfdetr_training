@@ -33,7 +33,7 @@ PROJECT_NAME = "rfdetr_training"
 # Шляхи
 BASE_DIR = Path(__file__).parent
 # DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
-DATASET_DIR = BASE_DIR / "tests" / "test_dataset"  # Змініть на ваш датасет
+DATASET_DIR = Path("D:/dataset_for_training")
 
 # Модель
 PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для завантаження з HuggingFace
@@ -43,7 +43,7 @@ PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для заван�
 # КОНФІГУРАЦІЯ МОДЕЛІ
 # =============================================================================
 MODEL_CONFIG = ModelConfig(
-    model_size="m",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large, xl=xlarge, 2xl=2xlarge
+    model_size="2xl",                 # Розмір моделі: n=nano, s=small, m=medium, b=base, l=large, xl=xlarge, 2xl=2xlarge
     num_classes=3,                  # Кількість класів (автовизначається з датасету)
     pretrained_weights=PRETRAINED_WEIGHTS,  # Шлях до попередньо навчених ваг
     freeze_encoder=False,           # Заморозити encoder (DINOv2 backbone)
@@ -60,7 +60,7 @@ TRAINING_CONFIG = TrainingConfig(
     # Налаштування проекту
     # -------------------------------------------------------------------------
     project=f"runs/{PROJECT_NAME}",  # Папка для збереження результатів
-    name="rfdetr_m_for_autolabeling",                      # Назва run: створює exp, exp2, exp3, ...
+    name="rfdetr_2xl_for_autolabeling",                      # Назва run: створює exp, exp2, exp3, ...
     exist_ok=False,                  # True = перезаписати існуючий run
     
     # -------------------------------------------------------------------------
