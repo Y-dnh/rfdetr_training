@@ -415,15 +415,15 @@ class RFDETRValidator:
             p_running = total_tp_running / (total_tp_running + total_fp_running + 1e-9)
             r_running = total_tp_running / (total_tp_running + total_fn_running + 1e-9)
             
-            # Update progress bar
+            # Update progress bar (mAP can only be computed at the end via COCO eval)
             desc = ("%20s" + "%10s" * 2 + "%10.3f" * 2 + "%10s" * 2) % (
                 "all",
                 total_images,
                 total_gt_running,
                 p_running,
                 r_running,
-                "0.0",
-                "0.0"
+                "--",
+                "--"
             )
             pbar.set_description(desc)
             pbar.set_postfix_str(f"{batch_size/inference_time:.2f}fps")
@@ -677,11 +677,17 @@ class RFDETRValidator:
             
             for box, score, label in zip(formatted_boxes, pred_scores, pred_labels):
                 if label < 0: continue
+                
+                # Filter out background/no-object class (label >= num_classes)
+                label_int = int(label)
+                if label_int >= len(dataset.coco.cats):
+                    continue
+                
                 # Convert label index to COCO category ID
                 if hasattr(dataset, 'label_to_cat_id'):
-                    cat_id = dataset.label_to_cat_id.get(int(label), int(label))
+                    cat_id = dataset.label_to_cat_id.get(label_int, label_int)
                 else:
-                    cat_id = int(label)
+                    cat_id = label_int
                     
                 coco_results.append({
                     'image_id': int(image_id),

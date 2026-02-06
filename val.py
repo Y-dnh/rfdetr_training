@@ -25,8 +25,8 @@ BASE_DIR = Path(__file__).parent
 DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
 
 # Модель
-MODEL_PATH = "rfdetr_dpsu_v8.pth"  # Шлях до навченої моделі
-MODEL_SIZE = "m"                # Розмір моделі ('n', 's', 'm', 'b', 'l', 'xl', '2xl') - "m" для RF-DETR Medium
+MODEL_PATH = "runs/rfdetr_training/rfdetr_2xl_for_autolabeling/weights/last.pt"  # Шлях до навченої моделі
+MODEL_SIZE = "2xl"                # Розмір моделі ('n', 's', 'm', 'b', 'l', 'xl', '2xl') - "2xl" для RF-DETR 2XLarge
 
 
 # =============================================================================
@@ -83,7 +83,7 @@ INFERENCE_CONFIG = {
 def main(
     model_path: str = MODEL_PATH,
     dataset_dir: str = None,
-    split: str = "test",
+    split: str = "valid",  # Змінено з "test" на "valid"
     save_results: bool = True,
     **kwargs
 ):

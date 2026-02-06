@@ -632,8 +632,37 @@ class RFDETRTrainer:
                 total_loss_giou += loss_dict.get('loss_giou', torch.tensor(0)).item()
                 
                 # Post-process for evaluation
-                orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
-                results = self.postprocessor(outputs, orig_target_sizes)
+                # Use letterboxed image size for PostProcessor, then un-letterbox
+                # to original coordinates for COCO eval.
+                # This is necessary because the model operates in letterboxed space
+                # (e.g. 576x576) but COCO GT annotations use original image coords.
+                b_size = images.shape[0]
+                letterbox_sizes = torch.tensor(
+                    [images.shape[-2:]] * b_size, device=images.device
+                )
+                results = self.postprocessor(outputs, letterbox_sizes)
+                
+                # Un-letterbox: convert boxes from letterboxed coords to original image coords
+                cur_h, cur_w = images.shape[-2], images.shape[-1]
+                for i_res, (result, tgt) in enumerate(zip(results, targets)):
+                    orig_h, orig_w = tgt['orig_size'].tolist()
+                    r = min(cur_h / orig_h, cur_w / orig_w)
+                    pad_w = (cur_w - round(orig_w * r)) / 2
+                    pad_h = (cur_h - round(orig_h * r)) / 2
+                    
+                    boxes = result['boxes']
+                    if len(boxes) > 0:
+                        boxes[:, 0] -= pad_w
+                        boxes[:, 2] -= pad_w
+                        boxes[:, 1] -= pad_h
+                        boxes[:, 3] -= pad_h
+                        boxes /= r
+                        # Clip to original image bounds
+                        boxes[:, 0].clamp_(0, orig_w)
+                        boxes[:, 2].clamp_(0, orig_w)
+                        boxes[:, 1].clamp_(0, orig_h)
+                        boxes[:, 3].clamp_(0, orig_h)
+                        result['boxes'] = boxes
                 
                 res = {target['image_id'].item(): output for target, output in zip(targets, results)}
                 coco_evaluator.update(res)
@@ -662,11 +691,13 @@ class RFDETRTrainer:
                 coco_evaluator.accumulate()
                 coco_evaluator.summarize()
         
-        # Extract metrics
+        # Extract metrics from COCO eval
         stats = coco_evaluator.coco_eval['bbox'].stats
-        mAP50_95 = stats[0]
-        mAP50 = stats[1]
-        precision = stats[0]  # Use mAP50-95 as proxy for precision
+        mAP50_95 = stats[0]  # AP @[IoU=0.50:0.95 | area=all | maxDets=100]
+        mAP50 = stats[1]     # AP @[IoU=0.50 | area=all | maxDets=100]
+        # Note: COCO eval doesn't provide single P/R values.
+        # Use mAP50 as proxy for precision, AR@100 for recall.
+        precision = mAP50
         recall = stats[8] if len(stats) > 8 else mAP50  # AR@100
         
         # Print final metrics (same format as progress bar description, no header - already printed)

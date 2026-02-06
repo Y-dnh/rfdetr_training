@@ -103,6 +103,9 @@ class CocoEvaluator(object):
             boxes = sv.xyxy_to_xywh(boxes.cpu().numpy()).tolist()
             scores = prediction["scores"].tolist()
             labels = prediction["labels"].tolist()
+            
+            # Get valid category IDs from COCO ground truth
+            valid_cat_ids = set(self.coco_gt.getCatIds())
 
             coco_results.extend(
                 [
@@ -113,6 +116,7 @@ class CocoEvaluator(object):
                         "score": scores[k],
                     }
                     for k, box in enumerate(boxes)
+                    if labels[k] in valid_cat_ids  # Filter out invalid categories (e.g., background)
                 ]
             )
         return coco_results
@@ -138,6 +142,9 @@ class CocoEvaluator(object):
             ]
             for rle in rles:
                 rle["counts"] = rle["counts"].decode("utf-8")
+            
+            # Get valid category IDs from COCO ground truth
+            valid_cat_ids = set(self.coco_gt.getCatIds())
 
             coco_results.extend(
                 [
@@ -148,6 +155,7 @@ class CocoEvaluator(object):
                         "score": scores[k],
                     }
                     for k, rle in enumerate(rles)
+                    if labels[k] in valid_cat_ids  # Filter out invalid categories
                 ]
             )
         return coco_results
@@ -164,6 +172,9 @@ class CocoEvaluator(object):
             labels = prediction["labels"].tolist()
             keypoints = prediction["keypoints"]
             keypoints = keypoints.flatten(start_dim=1).tolist()
+            
+            # Get valid category IDs from COCO ground truth
+            valid_cat_ids = set(self.coco_gt.getCatIds())
 
             coco_results.extend(
                 [
@@ -174,6 +185,7 @@ class CocoEvaluator(object):
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
+                    if labels[k] in valid_cat_ids  # Filter out invalid categories
                 ]
             )
         return coco_results
