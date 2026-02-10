@@ -68,6 +68,9 @@ def export_onnx(output_dir, model, input_names, input_tensors, output_names, dyn
     if hasattr(model, "export"):
         model.export()
 
+    # PyTorch 2.6+ uses dynamo-based ONNX exporter by default, which fails on
+    # RF-DETR's split/cat operations in transformer decoder (num_queries % group_detr != 0).
+    # Force legacy TorchScript-based exporter via dynamo=False.
     torch.onnx.export(
         model,
         input_tensors,
@@ -79,7 +82,9 @@ def export_onnx(output_dir, model, input_names, input_tensors, output_names, dyn
         do_constant_folding=True,
         verbose=verbose,
         opset_version=opset_version,
-        dynamic_axes=dynamic_axes)
+        dynamic_axes=dynamic_axes,
+        dynamo=False,
+    )
 
     print(f'\nSuccessfully exported ONNX model: {output_file}')
     return output_file

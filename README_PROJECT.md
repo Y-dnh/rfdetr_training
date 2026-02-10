@@ -5,17 +5,19 @@
 <h1 align="center">RF-DETR Training Pipeline</h1>
 
 <p align="center">
-  <b>🚀 Production-Ready Training Framework with Ultralytics-Style Augmentations</b>
+  <b>Production-Ready Training Framework with Ultralytics-Style Augmentations</b>
 </p>
 
 <p align="center">
-  <a href="#-key-features">Features</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-augmentations">Augmentations</a> •
-  <a href="#-configuration">Configuration</a> •
-  <a href="#-training-outputs">Outputs</a> •
-  <a href="#-api-reference">API</a>
+  <a href="#key-features">Features</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#model-variants">Models</a> &bull;
+  <a href="#architecture">Architecture</a> &bull;
+  <a href="#augmentations">Augmentations</a> &bull;
+  <a href="#configuration">Configuration</a> &bull;
+  <a href="#onnx-export">ONNX Export</a> &bull;
+  <a href="#training-outputs">Outputs</a> &bull;
+  <a href="#api-reference">API</a>
 </p>
 
 ---
@@ -24,27 +26,29 @@
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 | Feature | Original RF-DETR | This Fork |
 |---------|------------------|-----------|
-| **Augmentations** | Basic (resize, flip) | 🎨 Full Ultralytics suite: Mosaic, MixUp, CutMix, HSV, Erasing |
-| **Configuration** | argparse CLI | ⚙️ Type-safe dataclasses (`ModelConfig`, `TrainingConfig`, `AugmentationConfig`) |
-| **Visualizations** | TensorBoard only | 📊 Batch images, confusion matrix, PR/F1/P/R curves, metrics plots |
-| **Validation** | COCO eval | 📋 Extended: markdown reports, per-class stats, detailed analysis |
-| **Dataset** | CocoDetection | 📁 `RFDETRDataset` with integrated augmentation pipeline |
-| **Entry Point** | `Model.train()` | 🏋️ Dedicated `RFDETRTrainer` & `RFDETRValidator` classes |
-| **Box-Aware Augs** | ❌ | ✅ CutMix & RandomErasing preserve object visibility |
+| **Augmentations** | Basic (resize, flip) | Full Ultralytics suite: Mosaic, MixUp, CutMix, HSV, Erasing |
+| **Configuration** | argparse CLI | Type-safe dataclasses (`ModelConfig`, `TrainingConfig`, `AugmentationConfig`) |
+| **Visualizations** | TensorBoard only | Batch images, confusion matrix, PR/F1/P/R curves, metrics plots |
+| **Validation** | COCO eval | Extended: markdown reports, per-class stats, detailed analysis |
+| **Dataset** | CocoDetection | `RFDETRDataset` with integrated augmentation pipeline |
+| **Entry Point** | `Model.train()` | Dedicated `RFDETRTrainer` & `RFDETRValidator` classes |
+| **ONNX Export** | CLI-only | Auto-detect model from checkpoint, simplified config-based script |
+| **Box-Aware Augs** | No | CutMix & RandomErasing preserve object visibility |
+| **PyTorch 2.6+ Fix** | No | `dynamo=False` for legacy ONNX exporter compatibility |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/rfdetr_training.git
+git clone <repo-url>
 cd rfdetr_training
 
 # Install dependencies
@@ -53,72 +57,54 @@ pip install -e .
 
 ### Training
 
+```bash
+python train.py
+```
+
+Edit configuration at the top of `train.py`:
+
 ```python
-from rfdetr.training import (
-    setup_seed,
-    ModelConfig,
-    TrainingConfig,
-    AugmentationConfig,
-    RFDETRTrainer,
-)
-
-# Reproducibility
-setup_seed(42)
-
-# Configuration
-model_config = ModelConfig(
-    model_size="n",      # n, s, m, b, l, xl, 2xl
-    num_classes=3,       # Auto-detected from dataset
-)
-
-training_config = TrainingConfig(
-    epochs=100,
-    batch_size=16,
-    lr=1e-4,
-    project="runs/training",
-)
-
-augmentation_config = AugmentationConfig(
-    mosaic=1.0,          # 4-image mosaic
-    mixup=0.3,           # Alpha blending
-    cutmix=0.3,          # Box-aware cut & paste
-    fliplr=0.5,          # Horizontal flip
-    hsv_h=0.015,         # Hue variation
-    hsv_s=0.7,           # Saturation variation
-    hsv_v=0.4,           # Value variation
-)
-
-# Train
-trainer = RFDETRTrainer(model_config, training_config, augmentation_config)
-results = trainer.train(dataset_dir="path/to/dataset")
-
-print(f"Best mAP: {results['best_map']:.4f}")
+DATASET_DIR = Path("path/to/your/dataset")
+MODEL_CONFIG = ModelConfig(model_size="m", num_classes=3)
+TRAINING_CONFIG = TrainingConfig(epochs=100, batch_size=16)
+AUGMENTATION_CONFIG = AugmentationConfig(mosaic=1.0, mixup=0.3)
 ```
 
 ### Validation
 
-```python
-from rfdetr.training import RFDETRValidator
-
-validator = RFDETRValidator(
-    model_path="runs/training/exp/weights/best.pt",
-    model_size="n",
-    conf_threshold=0.5,
-    iou_threshold=0.5,
-)
-
-results = validator.validate(
-    dataset_dir="path/to/dataset",
-    split="test",
-    save_visualizations=True,
-)
+```bash
+python val.py
 ```
+
+Configure in `val.py`:
+
+```python
+MODEL_PATH = "runs/training/exp/weights/best.pt"
+MODEL_SIZE = "m"
+DATASET_DIR = Path("path/to/dataset")
+```
+
+### ONNX Export
+
+```bash
+python export_onnx.py
+```
+
+Configure in `export_onnx.py`:
+
+```python
+CHECKPOINT_PATH = r"path/to/model.pt"
+OUTPUT_DIR = None          # None = save next to checkpoint
+SIMPLIFY = True            # onnxsim simplification
+OPSET_VERSION = 17
+```
+
+Model architecture, resolution, and number of classes are **auto-detected** from the checkpoint.
 
 ### Dataset Format
 
 Supports both **COCO** (Roboflow export) and **YOLO** formats with auto-detection:
 
-#### COCO Format
 ```
 dataset/
 ├── train/
@@ -132,19 +118,54 @@ dataset/
 
 ---
 
-## 🏗 Architecture
+## Model Variants
+
+### Detection
+
+| Size | Code | Resolution | Decoder Layers | Params | COCO AP50:95 | Latency (ms) | License |
+|------|------|------------|----------------|--------|--------------|--------------|---------|
+| Nano | `n` | 384x384 | 2 | 30.5M | 48.4 | 2.3 | Apache-2.0 |
+| Small | `s` | 512x512 | 3 | 32.1M | 53.0 | 3.5 | Apache-2.0 |
+| Medium | `m` | 576x576 | 4 | 33.7M | 54.7 | 4.4 | Apache-2.0 |
+| Base | `b` | 560x560 | 3 | 29M | — | — | Apache-2.0 |
+| Large | `l` | 704x704 | 4 | 33.9M | 56.5 | 6.8 | Apache-2.0 |
+| XLarge | `xl` | 700x700 | 5 | 126.4M | 58.6 | 11.5 | PML-1.0 |
+| 2XLarge | `2xl` | 880x880 | 5 | 126.9M | 60.1 | 17.2 | PML-1.0 |
+
+> **Note**: Base is the original RF-DETR model (patch_size=14, DINOv2-Small). Nano/Small/Medium/Large are newer versions (patch_size=16). XLarge and 2XLarge require `accept_platform_model_license=True`.
+
+> **Important**: Image resolution is **strictly tied** to the model architecture. Unlike Ultralytics YOLO/RT-DETR where `imgsz` is a free parameter, RF-DETR uses a fixed resolution per model size.
+
+### Segmentation
+
+| Size | Resolution | Params | COCO AP50:95 | Latency (ms) |
+|------|------------|--------|--------------|--------------|
+| Nano | 312x312 | 33.6M | 40.3 | 3.4 |
+| Small | 384x384 | 33.7M | 43.1 | 4.4 |
+| Medium | 432x432 | 35.7M | 45.3 | 5.9 |
+| Large | 504x504 | 36.2M | 47.1 | 8.8 |
+| XLarge | 624x624 | 38.1M | 48.8 | 13.5 |
+| 2XLarge | 768x768 | 38.6M | 49.9 | 21.8 |
+
+All latency measured on NVIDIA T4, TensorRT FP16, batch size 1.
+
+---
+
+## Architecture
 
 ```
 rfdetr_training/
-├── train.py                      # 🚀 Training entry point
-├── val.py                        # 🧪 Validation entry point
+├── train.py                      # Training entry point
+├── val.py                        # Validation entry point
+├── export_onnx.py                # ONNX export (auto-detect model)
+│
 └── rfdetr/
-    ├── training/                 # ⭐ CUSTOM MODULE
-    │   ├── trainer.py            # RFDETRTrainer (1258 lines)
-    │   ├── validator.py          # RFDETRValidator (1053 lines)
+    ├── training/                 # CUSTOM MODULE
+    │   ├── trainer.py            # RFDETRTrainer — full training loop
+    │   ├── validator.py          # RFDETRValidator — validation pipeline
     │   ├── dataset.py            # RFDETRDataset with augmentations
     │   │
-    │   ├── augmentations/        # 🎨 Ultralytics-style augmentations
+    │   ├── augmentations/        # Ultralytics-style augmentations
     │   │   ├── pipeline.py       # AugmentationPipeline orchestrator
     │   │   ├── mosaic.py         # Mosaic 4-grid & Mosaic9
     │   │   ├── mixup.py          # MixUp & CutMix (box-aware)
@@ -153,21 +174,25 @@ rfdetr_training/
     │   │   ├── erasing.py        # RandomErasing (box-aware)
     │   │   └── base.py           # BaseTransform, ToTensor, Normalize
     │   │
-    │   ├── visualizations/       # 📊 YOLO-style outputs
+    │   ├── visualizations/       # YOLO-style outputs
     │   │   ├── batch_visualizer.py    # Train/Val batch images
     │   │   ├── confusion_matrix.py    # Confusion matrix
     │   │   ├── curves.py              # PR, F1, P, R curves
     │   │   ├── metrics_plotter.py     # Training metrics
     │   │   └── labels_analyzer.py     # Label distribution
     │   │
-    │   ├── logging/              # 📝 Logging utilities
+    │   ├── logging/              # Logging utilities
     │   │   └── augmentation_logger.py
     │   │
-    │   └── utils/                # ⚙️ Configuration & utilities
+    │   └── utils/                # Configuration & utilities
     │       ├── config.py         # Dataclass configurations
     │       └── seed.py           # Reproducibility
     │
-    ├── platform/                 # 🔒 Platform-licensed models (PML-1.0)
+    ├── deploy/                   # Deployment tools
+    │   ├── export.py             # ONNX/TensorRT export core
+    │   └── benchmark.py          # Benchmarking
+    │
+    ├── platform/                 # Platform-licensed models (PML-1.0)
     │   └── models.py             # RFDETRXLarge, RFDETR2XLarge
     │
     ├── config.py                 # RF-DETR model configs (all sizes)
@@ -175,30 +200,22 @@ rfdetr_training/
     ├── detr.py                   # DETR implementation
     ├── models/                   # RF-DETR architecture
     └── datasets/                 # COCO & YOLO dataset loaders
-        ├── coco.py               # COCO format
-        └── yolo.py               # YOLO format (NEW)
+        ├── coco.py
+        └── yolo.py
 ```
-
-### Module Responsibilities
-
-| Module | Purpose |
-|--------|---------|
-| `RFDETRTrainer` | Complete training loop with gradient accumulation, warmup, early stopping, checkpointing |
-| `RFDETRValidator` | Full validation pipeline with COCO metrics, visualizations, markdown reports |
-| `RFDETRDataset` | PyTorch Dataset with integrated augmentation pipeline and epoch-aware controls |
-| `AugmentationPipeline` | Orchestrates all augmentations in correct order with logging |
-| `BatchVisualizer` | Generates train/val batch images with ground truth and predictions |
-| `ConfusionMatrix` | IoU-based confusion matrix calculation and visualization |
 
 ---
 
-## 🎨 Augmentations
+## Augmentations
 
 ### Pipeline Order
 
 ```
+Input Image
+    │
+    ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Mosaic        │ Combine 4 random images in 2×2 grid        │
+│  1. Mosaic        │ Combine 4 random images in 2x2 grid        │
 ├───────────────────┼─────────────────────────────────────────────┤
 │  2. Perspective   │ Rotation, translation, scale, shear        │
 ├───────────────────┼─────────────────────────────────────────────┤
@@ -216,88 +233,39 @@ rfdetr_training/
 ├───────────────────┼─────────────────────────────────────────────┤
 │  9. Normalize     │ ImageNet mean/std normalization             │
 └───────────────────┴─────────────────────────────────────────────┘
+    │
+    ▼
+Model Input (resolution depends on model size)
 ```
 
-### Augmentation Details
+### Details
 
-#### 🧩 Mosaic
-Combines 4 random images into a 2×2 grid, creating diverse training samples.
+**Mosaic** — combines 4 random images into a 2x2 grid. Parameters: `mosaic` (probability 0-1), `close_mosaic` (disable N epochs before end).
 
-```
-+--------+--------+
-| Img 1  | Img 2  |
-+--------+--------+
-| Img 3  | Img 4  |
-+--------+--------+
-```
+**MixUp** — alpha-blends two images: `output = a * img1 + (1-a) * img2`, where a ~ Beta(32, 32).
 
-**Parameters:**
-- `mosaic` — Probability (0-1)
-- `close_mosaic` — Disable N epochs before training ends
+**CutMix (box-aware)** — cuts a rectangular region from one image and pastes into another. Preserves bounding boxes if >= `min_visible` portion remains. Filters boxes smaller than `min_box_size`.
+
+**RandomErasing (box-aware)** — randomly erases rectangular regions while protecting object annotations. Validates overlap with GT boxes and ensures `min_visible` ratio.
+
+**RandomHSV** — modifies color channels: `H' = H * (1 +/- hsv_h)`, etc.
 
 ---
 
-#### 🔀 MixUp
-Alpha-blends two images: `output = α × img1 + (1-α) × img2`
+## Configuration
 
-Where α ~ Beta(32, 32) for balanced mixing.
-
----
-
-#### ✂️ CutMix (Box-Aware)
-Cuts a rectangular region from one image and pastes it into another.
-
-**Box-aware logic:**
-- Preserves bounding boxes if ≥ `min_visible` portion remains
-- Filters boxes smaller than `min_box_size` after cutting
-
----
-
-#### 🎭 RandomErasing (Box-Aware)
-Randomly erases rectangular regions while protecting object annotations.
-
-**Box-aware logic:**
-- Validates overlap with ground truth boxes
-- Ensures `min_visible` ratio of each box remains visible
-- Removes boxes that become smaller than `min_box_size`
-
----
-
-#### 🌈 RandomHSV
-Modifies color channels:
-```python
-H' = H × (1 ± hsv_h)
-S' = S × (1 ± hsv_s)
-V' = V × (1 ± hsv_v)
-```
-
----
-
-## ⚙️ Configuration
-
-### Model Variants
-
-| Size | Resolution | Decoder Layers | Parameters | License |
-|------|------------|----------------|------------|---------|
-| `n` (nano) | 384×384 | 2 | ~30.5M | Apache-2.0 |
-| `s` (small) | 512×512 | 3 | ~32.1M | Apache-2.0 |
-| `m` (medium) | 576×576 | 4 | ~33.7M | Apache-2.0 |
-| `b` (base) | 560×560 | 3 | ~29M | Apache-2.0 |
-| `l` (large) | 704×704 | 4 | ~33.9M | Apache-2.0 |
-| `xl` (xlarge) | 700×700 | 5 | ~126.4M | ⚠️ PML-1.0 |
-| `2xl` (2xlarge) | 880×880 | 5 | ~126.9M | ⚠️ PML-1.0 |
-
-> ⚠️ **Note**: XLarge and 2XLarge models require `accept_platform_model_license=True` and an active Roboflow platform plan.
+All scripts use **config-at-the-top** style (no argparse). Edit variables at the top of each file before running.
 
 ### ModelConfig
 
 ```python
 ModelConfig(
-    model_size="n",              # Model variant: n, s, m, b, l, xl, 2xl
+    model_size="m",              # n, s, m, b, l, xl, 2xl
     num_classes=3,               # Auto-detected from dataset
     pretrained_weights=None,     # Path or None for HuggingFace
     freeze_encoder=False,        # Freeze DINOv2 backbone
     freeze_encoder_epochs=0,     # Epochs with frozen encoder
+    accept_platform_license=True,  # Required for xl/2xl
 )
 ```
 
@@ -333,7 +301,7 @@ TrainingConfig(
     workers=8,
     
     # Visualizations
-    vis_batches=3,               # Batches to visualize
+    vis_batches=3,
 )
 ```
 
@@ -381,7 +349,67 @@ AugmentationConfig(
 
 ---
 
-## 📤 Training Outputs
+## ONNX Export
+
+### Standalone export
+
+```bash
+python export_onnx.py
+```
+
+Configure in `export_onnx.py`:
+
+```python
+CHECKPOINT_PATH = r"path/to/best.pt"   # .pt or .pth — both work
+OUTPUT_DIR = None                       # None = next to checkpoint
+SIMPLIFY = True                         # onnxsim
+OPSET_VERSION = 17
+BATCH_SIZE = 1
+```
+
+The script **auto-detects** from the checkpoint:
+- Model size (Nano/Small/Medium/Base/Large/XLarge/2XLarge)
+- Number of classes
+- Resolution
+- Backbone type (DINOv2-Small vs DINOv2-Base)
+
+### Auto-export after training
+
+Training automatically exports ONNX when `ExportConfig.enabled=True` in `train.py`. The export uses the same `rfdetr/deploy/export.py` core.
+
+### Export pipeline
+
+```
+PyTorch (.pt) --> ONNX (.onnx) --> [optional] onnxsim (.sim.onnx) --> [optional] TensorRT (.engine)
+```
+
+### Checkpoint format
+
+Training saves checkpoints as `.pt` files:
+
+```python
+{
+    'epoch': int,
+    'model': state_dict,
+    'optimizer': state_dict,
+    'lr_scheduler': state_dict,
+    'metrics': dict,
+    'best_map': float,
+    'class_names': list[str],
+}
+```
+
+`.pt` and `.pth` are interchangeable — PyTorch does not distinguish between extensions.
+
+### PyTorch 2.6+ compatibility
+
+Starting with PyTorch 2.6, `torch.onnx.export` introduced a new `dynamo`-based exporter. Since PyTorch 2.9, `dynamo=True` is the **default**. This new exporter fails on RF-DETR's dynamic split/cat operations in the transformer decoder.
+
+Fix applied in `rfdetr/deploy/export.py`: explicit `dynamo=False` forces the legacy TorchScript-based exporter.
+
+---
+
+## Training Outputs
 
 ```
 runs/training/exp/
@@ -414,10 +442,8 @@ runs/training/exp/
 
 The validator generates a comprehensive markdown report:
 
-```markdown
-# 🎯 RF-DETR Validation Report
-
-## Overall Performance
+```
+Overall Performance
 | Metric        | Value  |
 |---------------|--------|
 | mAP@0.5       | 0.6461 |
@@ -426,7 +452,7 @@ The validator generates a comprehensive markdown report:
 | Recall        | 0.6508 |
 | F1 Score      | 0.7451 |
 
-## Per-Class Performance
+Per-Class Performance
 | Class   | GT   | TP   | FP  | FN   | Precision | Recall |
 |---------|------|------|-----|------|-----------|--------|
 | class_0 | 2978 | 2007 | 145 | 971  | 0.933     | 0.674  |
@@ -436,7 +462,7 @@ The validator generates a comprehensive markdown report:
 
 ---
 
-## 📖 API Reference
+## API Reference
 
 ### RFDETRTrainer
 
@@ -453,7 +479,7 @@ class RFDETRTrainer:
     def train(
         self,
         dataset_dir: str,
-        resume: Optional[str] = None,  # Checkpoint path for resume
+        resume: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Returns:
@@ -480,7 +506,7 @@ class RFDETRValidator:
         workers: int = 8,
         device: str = "cuda",
         save_dir: Optional[str] = None,
-        half: bool = True,           # FP16 inference
+        half: bool = True,
     ) -> None: ...
 
     def validate(
@@ -529,66 +555,27 @@ class RFDETRDataset(torch.utils.data.Dataset):
 
 ---
 
-## 🔬 Comparison with Ultralytics YOLO
+## Comparison with Ultralytics YOLO
 
 | Feature | Ultralytics YOLO | This Project |
 |---------|------------------|--------------|
-| Mosaic | ✅ | ✅ |
-| MixUp | ✅ | ✅ |
-| CutMix | ✅ | ✅ (box-aware) |
-| RandomHSV | ✅ | ✅ |
-| RandomPerspective | ✅ | ✅ |
-| RandomErasing | ✅ | ✅ (box-aware) |
-| close_mosaic | ✅ | ✅ |
-| Confusion Matrix | ✅ | ✅ |
-| PR/F1 Curves | ✅ | ✅ |
-| Batch Visualizations | ✅ | ✅ |
-| Markdown Reports | ❌ | ✅ |
-| Augmentation Logging | ✅ | ✅ |
+| Mosaic | Yes | Yes |
+| MixUp | Yes | Yes |
+| CutMix | Yes | Yes (box-aware) |
+| RandomHSV | Yes | Yes |
+| RandomPerspective | Yes | Yes |
+| RandomErasing | Yes | Yes (box-aware) |
+| close_mosaic | Yes | Yes |
+| Confusion Matrix | Yes | Yes |
+| PR/F1 Curves | Yes | Yes |
+| Batch Visualizations | Yes | Yes |
+| Markdown Reports | No | Yes |
+| Augmentation Logging | Yes | Yes |
+| ONNX Auto-Detect | No | Yes |
 
 ---
 
-## 🛠️ Command-Line Usage
-
-### Basic Training
-
-```bash
-python train.py
-```
-
-Edit configuration at the top of `train.py`:
-
-```python
-DATASET_DIR = Path("path/to/your/dataset")
-MODEL_CONFIG = ModelConfig(model_size="m", num_classes=3)
-TRAINING_CONFIG = TrainingConfig(epochs=100, batch_size=16)
-AUGMENTATION_CONFIG = AugmentationConfig(mosaic=1.0, mixup=0.3)
-```
-
-### Resume Training
-
-```python
-# In train.py, uncomment:
-# resume_training("runs/training/exp/weights/last.pt")
-```
-
-### Validation
-
-```bash
-python val.py
-```
-
-Configure in `val.py`:
-
-```python
-MODEL_PATH = "path/to/model.pt"
-MODEL_SIZE = "m"  # Must match trained model
-DATASET_DIR = Path("path/to/dataset")
-```
-
----
-
-## 📜 License
+## License
 
 This project is a fork of [RF-DETR](https://github.com/roboflow/rf-detr) with dual licensing:
 
@@ -600,5 +587,5 @@ See [LICENSE](LICENSE), [LICENSE.core](LICENSE.core), and [LICENSE.platform](LIC
 ---
 
 <p align="center">
-  <sub>Built with ❤️ extending the amazing work by <a href="https://roboflow.com">Roboflow</a></sub>
+  <sub>Built extending the work by <a href="https://roboflow.com">Roboflow</a></sub>
 </p>

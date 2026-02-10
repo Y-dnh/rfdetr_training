@@ -115,7 +115,7 @@ def main(
         model_path = None
     
     # Determine resolution based on model size
-    resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 576, 'l': 704, 'xl': 700, '2xl': 880}
+    resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
     imgsz = resolutions.get(MODEL_SIZE, 560)
     print(f"Using resolution: {imgsz} for model size '{MODEL_SIZE}'")
 

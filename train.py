@@ -113,7 +113,7 @@ TRAINING_CONFIG = TrainingConfig(
 AUGMENTATION_CONFIG = AugmentationConfig(
     # -------------------------------------------------------------------------
     # ПРИМІТКА: Розмір зображення (imgsz) автоматично береться з моделі:
-    # Nano=384, Small=512, Medium=576, Base=560, Large=560
+    # Nano=384, Small=512, Medium=576, Base=560, Large=704, XLarge=700, 2XLarge=880
     # -------------------------------------------------------------------------
     
     # -------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def main():
     setup_seed(SEED)
     
     # Визначаємо resolution по розміру моделі
-    model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 576, 'l': 704, 'xl': 700, '2xl': 880}
+    model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
     resolution = model_resolutions.get(MODEL_CONFIG.model_size, 560)
     
     print("\n" + "=" * 70)

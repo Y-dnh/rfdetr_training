@@ -309,7 +309,7 @@ class RFDETRTrainer:
             'n': 384,   # Nano
             's': 512,   # Small
             'm': 576,   # Medium
-            'b': 576,   # Base (Aligned with Medium or similar if not specified, but keeping safe default or checking user intent. User only showed N,S,M,L,XL,2XL. I'll stick to L=704 per image. I will set B to 576 to be safe or 560? The user said "review sizes". I will stick to what's known: L=704)
+            'b': 560,   # Base
             'l': 704,   # Large
             'xl': 700,  # XLarge (platform)
             '2xl': 880, # 2XLarge (platform)
@@ -1387,7 +1387,7 @@ class RFDETRTrainer:
             self.training_logger.info("Exporting best model to ONNX...")
             
             # Get resolution from model config
-            model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 576, 'l': 704, 'xl': 700, '2xl': 880}
+            model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
             resolution = model_resolutions.get(self.model_config.model_size, 640)
             
             # Find checkpoint
