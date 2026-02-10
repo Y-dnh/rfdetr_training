@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Copied from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
@@ -315,7 +315,7 @@ def evaluate(self: COCOeval) -> Tuple[List[int], np.ndarray]:
 def patched_pycocotools_summarize(self):
     '''
     Compute and display summary metrics for evaluation results.
-    Note this functin can *only* be applied on the default parameter setting
+    Note this function can *only* be applied on the default parameter setting
     '''
     def _summarize(ap=1, iouThr=None, areaRng='all', maxDets=100):
         p = self.params

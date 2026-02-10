@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.4.0.post0"
+version = "1.4.1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
-    {name = "Roboflow, Inc", email = "peter@roboflow.com"}
+    {name = "Roboflow, Inc", email = "develop@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -19,7 +19,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -42,7 +41,7 @@ dependencies = [
     "scipy",
     "tqdm",
     "numpy",
-    "transformers",
+    "transformers>4.0.0, <5.0.0",
     "peft",
     "polygraphy",
     "rf100vl",
@@ -65,6 +64,7 @@ metrics = [
     "tensorboard>=2.13.0",
     "wandb"
 ]
+plus = ["rfdetr_plus"]
 
 [dependency-groups]
 build = [
@@ -126,3 +126,16 @@ ignore = [
     "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
     "F821",  # todo: Undefined name `...`
 ]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-v",                   # verbose output
+    "--color=yes",          # colored output
+#    "--doctest-modules",    # TODO: run doctests from all modules
+]
+markers = [
+    "gpu: tests that require GPU or are slow on CPU",
+]
+
+[tool.codespell]
+skip = "*.pth"

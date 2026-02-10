@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Conditional DETR (https://github.com/Atten4Vis/ConditionalDETR)
@@ -42,7 +42,6 @@ import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
 from rfdetr.models import PostProcess, build_criterion_and_postprocessors, build_model
-from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 from rfdetr.util.benchmark import benchmark
 from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
@@ -67,8 +66,6 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-medium.pth": "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
     "rf-detr-seg-preview.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-preview.pt",
     "rf-detr-large-2026.pth": "https://storage.googleapis.com/rfdetr/rf-detr-large-2026.pth",
-    "rf-detr-xlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-xl-ft.pth",
-    "rf-detr-xxlarge.pth": "https://storage.googleapis.com/rfdetr/rf-detr-2xl-ft.pth",
     "rf-detr-seg-nano.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-n-ft.pth",
     "rf-detr-seg-small.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-s-ft.pth",
     "rf-detr-seg-medium.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-m-ft.pth",
@@ -77,19 +74,21 @@ OPEN_SOURCE_MODELS = {
     "rf-detr-seg-xxlarge.pt": "https://storage.googleapis.com/rfdetr/rf-detr-seg-2xl-ft.pth",
 }
 
-
-HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
-
 def download_pretrain_weights(pretrain_weights: str, redownload=False):
-    if pretrain_weights in HOSTED_MODELS:
-        if redownload or not os.path.exists(pretrain_weights):
-            logger.info(
-                f"Downloading pretrained weights for {pretrain_weights}"
-            )
-            download_file(
-                HOSTED_MODELS[pretrain_weights],
-                pretrain_weights,
-            )
+    from rfdetr.platform.platform_downloads import PLATFORM_MODELS
+
+    HOSTED_MODELS = {**OPEN_SOURCE_MODELS, **PLATFORM_MODELS}
+    if pretrain_weights not in HOSTED_MODELS:
+        return
+    if os.path.exists(pretrain_weights) and not redownload:
+        return
+    logger.info(
+        f"Downloading pretrained weights for {pretrain_weights}"
+    )
+    download_file(
+        HOSTED_MODELS[pretrain_weights],
+        pretrain_weights,
+    )
 
 class Model:
     def __init__(self, **kwargs):
@@ -116,6 +115,9 @@ class Model:
 
             checkpoint_num_classes = checkpoint['model']['class_embed.bias'].shape[0]
             if checkpoint_num_classes != args.num_classes + 1:
+                logger.warning(
+                    f"Reinitializing detection head with {checkpoint_num_classes} classes"
+                )
                 self.reinitialize_detection_head(checkpoint_num_classes)
             # add support to exclude_keys
             # e.g., when load object365 pretrain, do not load `class_embed.[weight, bias]`
@@ -721,6 +723,8 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     parser.add_argument('--num_classes', default=2, type=int)
     parser.add_argument('--grad_accum_steps', default=1, type=int)
+    parser.add_argument('--print_freq', default=10, type=int,
+                        help='log frequency (in steps) during train/eval')
     parser.add_argument('--amp', default=False, type=bool)
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_encoder', default=1.5e-4, type=float)
@@ -909,6 +913,7 @@ def populate_args(
     # Basic training parameters
     num_classes=2,
     grad_accum_steps=1,
+    print_freq=10,
     amp=False,
     lr=1e-4,
     lr_encoder=1.5e-4,
@@ -1032,6 +1037,7 @@ def populate_args(
     args = argparse.Namespace(
         num_classes=num_classes,
         grad_accum_steps=grad_accum_steps,
+        print_freq=print_freq,
         amp=amp,
         lr=lr,
         lr_encoder=lr_encoder,

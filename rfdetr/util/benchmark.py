@@ -1,5 +1,9 @@
 # ------------------------------------------------------------------------
-# LW-DETR
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
@@ -499,13 +503,13 @@ def flop_count(
     if customized_ops:
         flop_count_ops.update(customized_ops)
 
-    # If whitelist is None, count flops for all suported operations.
+    # If whitelist is None, count flops for all supported operations.
     if whitelist is None:
         whitelist_set = set(flop_count_ops.keys())
     else:
         whitelist_set = set(whitelist)
 
-    # Torch script does not support parallell torch models.
+    # Torch script does not support parallel torch models.
     if isinstance(
         model,
         (nn.parallel.distributed.DistributedDataParallel, nn.DataParallel),

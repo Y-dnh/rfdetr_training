@@ -1,5 +1,9 @@
 # ------------------------------------------------------------------------
-# LW-DETR
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
@@ -279,7 +283,7 @@ def get_sha() -> str:
         sha = _run(['git', 'rev-parse', 'HEAD'])
         subprocess.check_output(['git', 'diff'], cwd=cwd)
         diff = _run(['git', 'diff-index', 'HEAD'])
-        diff = "has uncommited changes" if diff else "clean"
+        diff = "has uncommitted changes" if diff else "clean"
         branch = _run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
     except Exception:
         pass

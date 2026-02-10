@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-# Modified from LW-DETR (https://github.com/baidu-research/LW-DETR)
+# Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
@@ -93,4 +93,6 @@ def build_dataset(image_set: str, args: Any, resolution: int) -> torch.utils.dat
         return build_o365(image_set, args, resolution)
     if args.dataset_file == 'roboflow':
         return build_roboflow(image_set, args, resolution)
+    if args.dataset_file == 'yolo':
+        return build_roboflow_from_yolo(image_set, args, resolution)
     raise ValueError(f'dataset {args.dataset_file} not supported')
