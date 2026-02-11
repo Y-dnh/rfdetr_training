@@ -27,7 +27,7 @@ from rfdetr.training.utils.config import ModelConfig, TrainingConfig, Augmentati
 MODEL_CONFIGS = {
     'nano': {
         'size': 'n',
-        'batch_size': 16,
+        'batch_size': 4,
         'resolution': 384,
     },
     # 'small': {
@@ -83,7 +83,7 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
     
     # Training config - 2 epochs
     training_config = TrainingConfig(
-        epochs=1,
+        epochs=2,
         batch_size=config['batch_size'],
         workers=2, 
         lr=1e-4,
@@ -99,7 +99,7 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
     aug_config = AugmentationConfig(
         # --- Основні ---
         mosaic=1.0,
-        close_mosaic=0,                  # 1 епоха — без close_mosaic
+        close_mosaic=1,                  # 1 епоха — без close_mosaic
         mixup=0.0,
         cutmix=0.0,
 

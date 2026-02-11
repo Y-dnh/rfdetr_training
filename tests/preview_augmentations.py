@@ -42,7 +42,7 @@ from rfdetr.training.visualizations.batch_visualizer import (
 # =============================================================================
 
 # Шлях до датасету (COCO-формат з train/valid/test)
-DATASET_DIR = Path("D:/dataset_for_training")
+DATASET_DIR = Path("tests/test_dataset")
 
 # Вихідна папка для збережених прикладів (всередині tests/)
 OUTPUT_DIR = Path(__file__).parent / "augmentation_preview"

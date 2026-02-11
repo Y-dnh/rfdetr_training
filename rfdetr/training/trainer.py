@@ -155,7 +155,6 @@ class RFDETRTrainer:
             RFDETRBaseConfig, RFDETRLargeConfig, RFDETRNanoConfig,
             RFDETRSmallConfig, RFDETRMediumConfig,
         )
-        from rfdetr.platform.models import RFDETRXLargeConfig, RFDETR2XLargeConfig
         
         cfg = self.model_config
         size_to_config = {
@@ -164,9 +163,13 @@ class RFDETRTrainer:
             'm': RFDETRMediumConfig,
             'b': RFDETRBaseConfig,
             'l': RFDETRLargeConfig,
-            'xl': RFDETRXLargeConfig,
-            '2xl': RFDETR2XLargeConfig,
         }
+        
+        # Import platform models only when needed (requires rfdetr_plus)
+        if cfg.model_size in ('xl', '2xl'):
+            from rfdetr.platform.models import RFDETRXLargeConfig, RFDETR2XLargeConfig
+            size_to_config['xl'] = RFDETRXLargeConfig
+            size_to_config['2xl'] = RFDETR2XLargeConfig
         
         rfdetr_config_class = size_to_config.get(cfg.model_size, RFDETRBaseConfig)
         self.rfdetr_config = rfdetr_config_class(num_classes=num_classes)

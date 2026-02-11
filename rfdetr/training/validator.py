@@ -33,7 +33,6 @@ from rfdetr.training.visualizations import (
     match_predictions_to_gt,
 )
 from rfdetr.detr import RFDETRBase, RFDETRLarge, RFDETRNano, RFDETRSmall, RFDETRMedium
-from rfdetr.platform.models import RFDETRXLarge, RFDETR2XLarge
 
 
 class RFDETRValidator:
@@ -191,20 +190,16 @@ class RFDETRValidator:
                 self.rfdetr = RFDETRSmall(pretrain_weights=self.model_path, num_classes=num_classes)
             elif model_size in ['m', 'medium']:
                 self.rfdetr = RFDETRMedium(pretrain_weights=self.model_path, num_classes=num_classes)
+            elif model_size in ['b', 'base']:
+                self.rfdetr = RFDETRBase(pretrain_weights=self.model_path, num_classes=num_classes)
             elif model_size in ['l', 'large']:
                 self.rfdetr = RFDETRLarge(pretrain_weights=self.model_path, num_classes=num_classes)
             elif model_size in ['xl', 'xlarge']:
-                self.rfdetr = RFDETRXLarge(
-                    pretrain_weights=self.model_path, 
-                    num_classes=num_classes,
-                    accept_platform_model_license=True
-                )
+                from rfdetr.platform.models import RFDETRXLarge
+                self.rfdetr = RFDETRXLarge(pretrain_weights=self.model_path, num_classes=num_classes, accept_platform_model_license=True)
             elif model_size in ['2xl', '2xlarge']:
-                self.rfdetr = RFDETR2XLarge(
-                    pretrain_weights=self.model_path, 
-                    num_classes=num_classes,
-                    accept_platform_model_license=True
-                )
+                from rfdetr.platform.models import RFDETR2XLarge
+                self.rfdetr = RFDETR2XLarge(pretrain_weights=self.model_path, num_classes=num_classes, accept_platform_model_license=True)
             else:
                 self.rfdetr = RFDETRBase(pretrain_weights=self.model_path, num_classes=num_classes)
         except RuntimeError as e:

@@ -29,80 +29,88 @@ class AugmentationConfig:
     # ОСНОВНІ ПАРАМЕТРИ (ймовірності та сила аугментацій)
     # =====================================================================
     
-    # Image size (auto-detected from model: Nano=384, Small=512, Medium=576, etc.)
-    # При тренуванні перезаписується автоматично. Вказуйте вручну тільки для preview.
-    imgsz: int = 640
+    # Image size (auto-synced from model at training time)
+    # Nano=384, Small=512, Medium=576, Base=560, Large=704, XLarge=700, 2XLarge=880
+    # Вказуйте вручну тільки для preview. При тренуванні перезаписується автоматично.
+    imgsz: int = 640                  # Діапазон: >0 | Авто: визначається з моделі
     
-    # Mosaic (combines 4 images into one)
-    mosaic: float = 1.0               # Probability (0-1)
-    close_mosaic: int = 10            # Disable mosaic in last N epochs
+    # --- Композитні аугментації (об'єднання кількох зображень) ---
     
-    # MixUp (alpha-blending of 2 images)
-    mixup: float = 0.0                # Probability (0-1)
+    # Mosaic: 4 зображення → одне. Центр сітки рандомний.
+    mosaic: float = 1.0               # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.5–1.0
+    close_mosaic: int = 10            # Діапазон: [0–epochs] | Вимкнути mosaic в останніх N епохах | 0=завжди вимкнено
     
-    # CutMix (cut-paste region from another image)
-    cutmix: float = 0.0               # Probability (0-1)
+    # MixUp: альфа-блендинг 2 зображень (зазвичай слабкий).
+    mixup: float = 0.0                # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.15
     
-    # HSV color augmentation
-    hsv_h: float = 0.015              # Hue gain (0-1)
-    hsv_s: float = 0.7                # Saturation gain (0-1)
-    hsv_v: float = 0.4                # Value/brightness gain (0-1)
+    # CutMix: вирізає регіон з іншого зображення і вставляє.
+    cutmix: float = 0.0               # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
     
-    # Color augmentations
-    brightness: float = 0.0           # Probability of brightness change (0-1)
-    contrast: float = 0.0             # Probability of contrast change (0-1)
-    blur: float = 0.0                 # Probability of Gaussian blur (0-1)
-    noise: float = 0.0                # Probability of noise (0-1)
-    noise_type: str = 'gaussian_mono' # 'gaussian_mono' (IR), 'gaussian_rgb' (color), 'salt_pepper'
+    # --- Колірні аугментації ---
     
-    # Geometric augmentations
-    degrees: float = 0.0              # Max rotation (+/- degrees)
-    translate: float = 0.1            # Max translation (fraction of image size)
-    scale: float = 0.5                # Scale range (+/- scale)
-    shear: float = 0.0                # Max shear (degrees)
-    perspective: float = 0.0          # Perspective distortion (0-0.001)
+    # HSV: gain-фактори зсуву каналів H/S/V. Не ймовірність — сила зсуву.
+    hsv_h: float = 0.015              # Діапазон: [0.0–1.0] | Зсув Hue: ±h_gain*180° | Рекомендовано: 0.0–0.03
+    hsv_s: float = 0.7                # Діапазон: [0.0–1.0] | Масштаб Saturation: ×(1±s_gain) | Рекомендовано: 0.0–0.9
+    hsv_v: float = 0.4                # Діапазон: [0.0–1.0] | Масштаб Value: ×(1±v_gain) | Рекомендовано: 0.0–0.5
     
-    # Flip
-    fliplr: float = 0.5               # Horizontal flip probability (0-1)
-    flipud: float = 0.0               # Vertical flip probability (0-1)
+    # Інші колірні аугментації — ймовірності.
+    brightness: float = 0.0           # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
+    contrast: float = 0.0             # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
+    blur: float = 0.0                 # Діапазон: [0.0–1.0] | Gaussian blur | Рекомендовано: 0.0–0.2
+    noise: float = 0.0                # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.2
+    noise_type: str = 'gaussian_mono' # Варіанти: 'gaussian_mono'(IR), 'gaussian_rgb'(RGB), 'salt_pepper'
     
-    # Random Erasing (box-aware region erasing)
-    erasing: float = 0.0              # Probability (0-1)
-    erasing_value: Union[str, float] = 128  # Fill: 0=black, 128=gray, 'random'=noise
+    # --- Геометричні аугментації ---
+    
+    degrees: float = 0.0              # Діапазон: [0–180] | Поворот ±degrees | Рекомендовано: 0–15 | 0=вимкнено
+    translate: float = 0.1            # Діапазон: [0.0–1.0] | Зсув як частка imgsz | Рекомендовано: 0.0–0.2
+    scale: float = 0.5                # Діапазон: [0.0–0.9] | Масштаб: ×(1±scale) | Рекомендовано: 0.0–0.5 | 0=вимкнено
+    shear: float = 0.0                # Діапазон: [0–90] | Зсув перспективи (градуси) | Рекомендовано: 0–5 | 0=вимкнено
+    perspective: float = 0.0          # Діапазон: [0.0–0.001] | Перспективна деформація | Рекомендовано: 0.0–0.0005
+
+    # --- Відзеркалення ---
+    
+    fliplr: float = 0.5               # Діапазон: [0.0–1.0] | Горизонтальний flip | Рекомендовано: 0.5
+    flipud: float = 0.0               # Діапазон: [0.0–1.0] | Вертикальний flip | Рекомендовано: 0.0 (0.5 для аеро/супутник)
+    
+    # --- Random Erasing (box-aware видалення регіонів) ---
+    
+    erasing: float = 0.0              # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.4
+    erasing_value: Union[str, float] = 128  # Варіанти: 0=чорний, 128=сірий, 255=білий, 'random'=шум
     
     # =====================================================================
     # ТОНКІ НАЛАШТУВАННЯ (зазвичай змінювати не потрібно)
     # =====================================================================
     
-    # Mosaic fine-tuning
-    mosaic_scale: Tuple[float, float] = (0.5, 1.5)  # Center point range (fraction of imgsz)
-    mosaic_min_box_size: int = 2      # Min box size after mosaic (pixels)
+    # Mosaic
+    mosaic_scale: Tuple[float, float] = (0.5, 1.5)  # Діапазон: (>0, >0), max≤2.0 | Центр мозаїки = imgsz × [min, max]
+    mosaic_min_box_size: int = 2      # Діапазон: ≥1 пікс | Боксы менше — відкидаються | Рекомендовано: 2–4
     
-    # MixUp fine-tuning
-    mixup_alpha: float = 32.0         # Beta distribution alpha (higher = weaker mixing)
+    # MixUp
+    mixup_alpha: float = 32.0         # Діапазон: >0 | Beta(α,α): 1.0=рівномірний мікс, 32+=слабкий | Рекомендовано: 8–32
     
-    # CutMix fine-tuning
-    cutmix_alpha: float = 1.0         # Beta distribution alpha (1.0 = uniform cut size)
-    cutmix_min_visible: float = 0.3   # Min visible ratio of box (0-1)
-    cutmix_min_box_size: int = 10     # Min box size after clipping (pixels)
-    cutmix_overlap_thresh: float = 0.1  # Overlap below this keeps box unchanged (0-1)
+    # CutMix
+    cutmix_alpha: float = 1.0         # Діапазон: >0 | Beta(α,α): 1.0=рівномірний розмір | Рекомендовано: 0.5–2.0
+    cutmix_min_visible: float = 0.3   # Діапазон: [0.0–1.0] | Мін. видима частина боксу | Рекомендовано: 0.2–0.5
+    cutmix_min_box_size: int = 10     # Діапазон: ≥1 пікс | Мін. розмір боксу після обрізання | Рекомендовано: 5–20
+    cutmix_overlap_thresh: float = 0.1  # Діапазон: [0.0–1.0] | Нижче — бокс не змінюється | Рекомендовано: 0.05–0.2
     
-    # Color fine-tuning
-    brightness_range: Tuple[float, float] = (0.5, 1.5)  # Brightness multiplier range
-    contrast_range: Tuple[float, float] = (0.5, 1.5)    # Contrast multiplier range
-    blur_kernel_range: Tuple[int, int] = (3, 7)          # Blur kernel size range (odd numbers)
-    noise_strength: Tuple[float, float] = (5.0, 30.0)    # Gaussian noise std dev range
-    salt_pepper_amount: float = 0.02                      # Salt-and-pepper pixel fraction (0-1)
+    # Color
+    brightness_range: Tuple[float, float] = (0.5, 1.5)  # Діапазон: (>0, >0) | Множник: <1=темніше, >1=яскравіше | Рекомендовано: (0.5, 1.5)
+    contrast_range: Tuple[float, float] = (0.5, 1.5)    # Діапазон: (>0, >0) | Множник: <1=менше, >1=більше | Рекомендовано: (0.5, 1.5)
+    blur_kernel_range: Tuple[int, int] = (3, 7)          # Діапазон: (≥3, ≤15) непарні | Рекомендовано: (3, 7) | Більше=сильніший blur
+    noise_strength: Tuple[float, float] = (5.0, 30.0)    # Діапазон: (>0, >0) std dev | Рекомендовано: (5, 30) | Більше=сильніший шум
+    salt_pepper_amount: float = 0.02                      # Діапазон: [0.0–1.0] | Частка пікселів | Рекомендовано: 0.01–0.05
     
-    # Random Erasing fine-tuning
-    erasing_min_scale: float = 0.02    # Min erased area fraction (0-1)
-    erasing_max_scale: float = 0.33    # Max erased area fraction (0-1)
-    erasing_ratio: Tuple[float, float] = (0.3, 3.3)  # Aspect ratio range of erased region
-    erasing_min_visible: float = 0.5   # Min visible ratio of box (0-1)
-    erasing_min_box_size: int = 20     # Min box size after erasing (pixels)
+    # Random Erasing
+    erasing_min_scale: float = 0.02    # Діапазон: [0.0–1.0] < max_scale | Мін. частка площі | Рекомендовано: 0.02
+    erasing_max_scale: float = 0.33    # Діапазон: [0.0–1.0] > min_scale | Макс. частка площі | Рекомендовано: 0.2–0.4
+    erasing_ratio: Tuple[float, float] = (0.3, 3.3)  # Діапазон: (>0, >0) | Aspect ratio вирізу | Рекомендовано: (0.3, 3.3)
+    erasing_min_visible: float = 0.5   # Діапазон: [0.0–1.0] | Мін. видима частина боксу | Рекомендовано: 0.3–0.7
+    erasing_min_box_size: int = 20     # Діапазон: ≥1 пікс | Мін. розмір боксу | Рекомендовано: 10–30
     
-    # LetterBox fine-tuning
-    letterbox_color: Tuple[int, int, int] = (114, 114, 114)  # Padding fill color (R,G,B). Use (0,0,0) for IR
+    # LetterBox / Padding
+    letterbox_color: Tuple[int, int, int] = (114, 114, 114)  # Діапазон: (0-255, 0-255, 0-255) RGB | (114,114,114)=сірий, (0,0,0)=чорний для IR
     
     def __post_init__(self):
         """Validate configuration values."""
@@ -168,31 +176,40 @@ class TrainingConfig:
         resume: Path to checkpoint to resume from.
         pretrained: Path to pretrained weights or model name.
     """
-    epochs: int = 100
-    batch_size: int = 16
-    lr: float = 1e-4
-    weight_decay: float = 1e-4
-    warmup_epochs: int = 5
-    scheduler: str = 'cosine'
-    gradient_accumulation: int = 1
-    grad_clip: float = 0.1
-    early_stopping: int = 50
-    save_period: int = -1
-    val_period: int = 1
-    resume: Optional[str] = None
-    pretrained: Optional[str] = None
+    # --- Основні параметри навчання ---
+    epochs: int = 100                 # Діапазон: ≥1 | Рекомендовано: 50–300 (fine-tune: 20–100)
+    batch_size: int = 16              # Діапазон: ≥1 | Залежить від GPU VRAM | Рекомендовано: 4–32
     
-    # Device settings
-    device: str = 'cuda'
-    workers: int = 8
+    # --- Оптимізатор (AdamW) ---
+    lr: float = 1e-4                  # Діапазон: >0 | Рекомендовано: 1e-5–5e-4 | Fine-tune: 1e-4
+    weight_decay: float = 1e-4        # Діапазон: ≥0 | L2 регуляризація | Рекомендовано: 1e-5–1e-3
     
-    # Output settings
-    project: str = 'runs/train'
-    name: str = 'exp'
-    exist_ok: bool = False
+    # --- Learning rate scheduler ---
+    warmup_epochs: int = 5            # Діапазон: ≥0 | Рекомендовано: 1–10 | 0=без warmup
+    scheduler: str = 'cosine'         # Варіанти: 'cosine', 'step', 'linear' | Рекомендовано: 'cosine'
     
-    # Visualization settings
-    vis_batches: int = 3  # Number of training batches to visualize
+    # --- Градієнти ---
+    gradient_accumulation: int = 1    # Діапазон: ≥1 | Ефективний batch = batch_size × accumulation | Рекомендовано: 1–8
+    grad_clip: float = 0.1            # Діапазон: ≥0 | Макс. норма градієнта | 0=вимкнено | Рекомендовано: 0.05–0.5
+    
+    # --- Валідація та збереження ---
+    early_stopping: int = 50          # Діапазон: ≥0 | Зупинка якщо mAP не росте N епох | 0=вимкнено | Рекомендовано: 10–50
+    save_period: int = -1             # Діапазон: ≥1 або -1 | Checkpoint кожні N епох | -1=тільки best/last
+    val_period: int = 1               # Діапазон: ≥1 | Валідація кожні N епох | Рекомендовано: 1–5
+    resume: Optional[str] = None      # Шлях до checkpoint (.pt) для продовження тренування
+    pretrained: Optional[str] = None  # Шлях до ваг або ім'я моделі
+    
+    # --- Device ---
+    device: str = 'cuda'              # Варіанти: 'cuda', 'cpu', 'cuda:0', 'cuda:1'
+    workers: int = 8                  # Діапазон: ≥0 | DataLoader workers | 0=основний потік (Windows)
+    
+    # --- Вивід ---
+    project: str = 'runs/train'       # Базова папка для збереження результатів
+    name: str = 'exp'                 # Назва run: exp, exp2, exp3, ...
+    exist_ok: bool = False            # True=перезаписати існуючий run | False=створити новий
+    
+    # --- Візуалізації ---
+    vis_batches: int = 3              # Діапазон: ≥0 | Кількість батчів для візуалізації | 0=вимкнено
     
     def __post_init__(self):
         """Validate configuration values."""
@@ -263,14 +280,14 @@ class ModelConfig:
         freeze_encoder_epochs: Number of epochs to keep encoder frozen.
         accept_platform_license: Required for xl/2xl models (Platform Model License 1.0).
     """
-    model_size: str = 'b'  # base
-    # num_classes auto-detected from COCO JSON annotations at training time.
-    # This field is only used for serialization/logging.
-    num_classes: int = 80
-    pretrained_weights: Optional[str] = None
-    freeze_encoder: bool = False
-    freeze_encoder_epochs: int = 0
-    accept_platform_license: bool = False  # Required for xl/2xl models
+    model_size: str = 'b'             # Варіанти: 'n','s','m','b','l','xl','2xl' | Рекомендовано: 'b' або 'l'
+    # num_classes — автоматично визначається з COCO JSON анотацій датасету.
+    # Тут використовується тільки для серіалізації/логування.
+    num_classes: int = 80             # Діапазон: ≥1 | Авто: з COCO JSON | Ручне значення ігнорується при тренуванні
+    pretrained_weights: Optional[str] = None  # Шлях до .pt файлу або None (HuggingFace авто-завантаження)
+    freeze_encoder: bool = False      # True=заморозити DINOv2 backbone | Рекомендовано: False
+    freeze_encoder_epochs: int = 0    # Діапазон: [0–epochs] | Заморозити encoder на перші N епох | 0=не заморожувати
+    accept_platform_license: bool = False  # Обов'язково True для xl/2xl (Platform Model License 1.0)
     
     def __post_init__(self):
         """Validate configuration values."""
@@ -320,14 +337,14 @@ class ExportConfig:
         batch_size: Batch size for export (static batch).
         verbose: Verbose ONNX export.
     """
-    enabled: bool = True               # Експортувати модель після тренування
-    format: str = 'onnx'               # Формат: 'onnx', 'tensorrt', 'both'
-    simplify: bool = True              # Спростити ONNX (onnxsim)
-    opset_version: int = 17            # ONNX opset версія
-    dynamic_batch: bool = False        # Динамічний batch size
-    half: bool = False                 # FP16 (половинна точність)
-    batch_size: int = 1                # Batch size для експорту
-    verbose: bool = False              # Детальний вивід
+    enabled: bool = True               # True=експортувати після тренування | False=пропустити
+    format: str = 'onnx'              # Варіанти: 'onnx', 'tensorrt', 'both' | Рекомендовано: 'onnx'
+    simplify: bool = True             # True=спростити onnxsim (менший розмір, швидший інференс) | Рекомендовано: True
+    opset_version: int = 17           # Діапазон: ≥11 | Рекомендовано: 16–17 | 17=найновіший стабільний
+    dynamic_batch: bool = False       # True=різний batch при інференсі | False=фіксований batch_size
+    half: bool = False                # True=FP16 (швидше, менше пам'яті) | False=FP32 (точніше)
+    batch_size: int = 1               # Діапазон: ≥1 | Batch size при інференсі (ігнорується якщо dynamic_batch=True)
+    verbose: bool = False             # True=детальний ONNX export лог | False=тихий режим
     
     def __post_init__(self):
         """Validate configuration values."""
