@@ -30,7 +30,7 @@
 
 | Feature | Original RF-DETR | This Fork |
 |---------|------------------|-----------|
-| **Augmentations** | Basic (resize, flip) | Full Ultralytics suite: Mosaic, MixUp, CutMix, HSV, Erasing |
+| **Augmentations** | Basic (resize, flip) | Full suite: Mosaic, MixUp, CutMix, HSV, Brightness, Contrast, Blur, Noise, Erasing |
 | **Configuration** | argparse CLI | Type-safe dataclasses (`ModelConfig`, `TrainingConfig`, `AugmentationConfig`) |
 | **Visualizations** | TensorBoard only | Batch images, confusion matrix, PR/F1/P/R curves, metrics plots |
 | **Validation** | COCO eval | Extended: markdown reports, per-class stats, detailed analysis |
@@ -65,7 +65,7 @@ Edit configuration at the top of `train.py`:
 
 ```python
 DATASET_DIR = Path("path/to/your/dataset")
-MODEL_CONFIG = ModelConfig(model_size="m", num_classes=3)
+MODEL_CONFIG = ModelConfig(model_size="m")  # num_classes auto-detected from COCO JSON
 TRAINING_CONFIG = TrainingConfig(epochs=100, batch_size=16)
 AUGMENTATION_CONFIG = AugmentationConfig(mosaic=1.0, mixup=0.3)
 ```
@@ -219,19 +219,27 @@ Input Image
 ├───────────────────┼─────────────────────────────────────────────┤
 │  2. Perspective   │ Rotation, translation, scale, shear        │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  3. MixUp/CutMix  │ Blend or cut-paste between images          │
+│  3. MixUp         │ Alpha-blend with another image              │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  4. HSV           │ Hue, Saturation, Value adjustments          │
+│  4. CutMix        │ Cut-paste region from another image         │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  5. Color Augs    │ Brightness, Contrast, Blur, Noise          │
+│  5. HSV           │ Hue, Saturation, Value adjustments          │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  6. Flip          │ Horizontal / Vertical flip                  │
+│  6. Brightness    │ Random brightness multiplier                │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  7. Erasing       │ Random rectangular region removal           │
+│  7. Contrast      │ Random contrast multiplier                  │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  8. LetterBox     │ Resize with padding to target size          │
+│  8. Blur          │ Gaussian blur with random kernel            │
 ├───────────────────┼─────────────────────────────────────────────┤
-│  9. Normalize     │ ImageNet mean/std normalization             │
+│  9. Noise         │ Gaussian (mono/RGB) or Salt-and-pepper      │
+├───────────────────┼─────────────────────────────────────────────┤
+│  10. Flip         │ Horizontal / Vertical flip                  │
+├───────────────────┼─────────────────────────────────────────────┤
+│  11. LetterBox    │ Resize with padding to target size          │
+├───────────────────┼─────────────────────────────────────────────┤
+│  12. Erasing      │ Box-aware random region removal             │
+├───────────────────┼─────────────────────────────────────────────┤
+│  13. Normalize    │ ImageNet mean/std normalization             │
 └───────────────────┴─────────────────────────────────────────────┘
     │
     ▼
@@ -240,15 +248,31 @@ Model Input (resolution depends on model size)
 
 ### Details
 
-**Mosaic** — combines 4 random images into a 2x2 grid. Parameters: `mosaic` (probability 0-1), `close_mosaic` (disable N epochs before end).
+**Mosaic** — combines 4 random images into a 2x2 grid around a random center point. `mosaic_scale` controls the center range. `close_mosaic` disables mosaic in the final N epochs.
 
-**MixUp** — alpha-blends two images: `output = a * img1 + (1-a) * img2`, where a ~ Beta(32, 32).
+**MixUp** — alpha-blends two images: `output = a * img1 + (1-a) * img2`, where `a ~ Beta(alpha, alpha)`. Higher `mixup_alpha` means weaker mixing.
 
-**CutMix (box-aware)** — cuts a rectangular region from one image and pastes into another. Preserves bounding boxes if >= `min_visible` portion remains. Filters boxes smaller than `min_box_size`.
+**CutMix (box-aware)** — cuts a rectangular region from one image and pastes into another. Preserves bounding boxes if >= `cutmix_min_visible` portion remains. Uses `cutmix_overlap_thresh` to skip negligible overlaps. Filters boxes smaller than `cutmix_min_box_size`.
 
-**RandomErasing (box-aware)** — randomly erases rectangular regions while protecting object annotations. Validates overlap with GT boxes and ensures `min_visible` ratio.
+**RandomErasing (box-aware)** — randomly erases rectangular regions with configurable fill (`erasing_value`: 0=black, 128=gray). Protects object annotations via `erasing_min_visible` and `erasing_min_box_size`. Area range controlled by `erasing_min_scale` / `erasing_max_scale`, shape by `erasing_ratio`.
 
-**RandomHSV** — modifies color channels: `H' = H * (1 +/- hsv_h)`, etc.
+**HSV** — modifies color channels: `H' = H * (1 ± hsv_h)`, etc.
+
+**Brightness / Contrast** — random multiplier from configurable range (e.g. `brightness_range=(0.5, 1.5)`).
+
+**Blur** — Gaussian blur with kernel size from `blur_kernel_range`.
+
+**Noise** — three types: `gaussian_mono` (monochrome, ideal for IR/grayscale), `gaussian_rgb` (per-channel, for color images), `salt_pepper`. Strength controlled by `noise_strength` (Gaussian std dev range) or `salt_pepper_amount` (pixel fraction).
+
+### Augmentation Preview
+
+Generate visual examples of augmented images with bounding boxes:
+
+```bash
+python tests/preview_augmentations.py
+```
+
+Edit the config at the top of the file to test different augmentation combinations. Output is saved to `tests/augmentation_preview/`.
 
 ---
 
@@ -261,7 +285,7 @@ All scripts use **config-at-the-top** style (no argparse). Edit variables at the
 ```python
 ModelConfig(
     model_size="m",              # n, s, m, b, l, xl, 2xl
-    num_classes=3,               # Auto-detected from dataset
+    # num_classes — auto-detected from COCO JSON dataset annotations
     pretrained_weights=None,     # Path or None for HuggingFace
     freeze_encoder=False,        # Freeze DINOv2 backbone
     freeze_encoder_epochs=0,     # Epochs with frozen encoder
@@ -307,43 +331,73 @@ TrainingConfig(
 
 ### AugmentationConfig
 
+The config is split into **main parameters** (probabilities, what to enable) and **fine-tuning** (ranges, thresholds — good defaults, rarely need changing).
+
 ```python
 AugmentationConfig(
-    # Mosaic
-    mosaic=1.0,
-    mosaic_scale=(0.5, 1.5),
-    close_mosaic=10,
-    
-    # MixUp / CutMix
-    mixup=0.0,
-    cutmix=0.0,
-    cutmix_min_visible=0.3,
-    cutmix_min_box_size=10,
-    
-    # HSV
-    hsv_h=0.015,
-    hsv_s=0.7,
-    hsv_v=0.4,
-    
+    # =================================================================
+    # MAIN PARAMETERS (probabilities & strength)
+    # =================================================================
+
+    # Composite augmentations
+    mosaic=1.0,                      # Mosaic 4-in-1 grid (0-1)
+    close_mosaic=10,                 # Disable mosaic in last N epochs
+    mixup=0.0,                       # MixUp alpha-blending (0-1)
+    cutmix=0.0,                      # CutMix cut-paste (0-1)
+
     # Color
-    brightness=0.0,
-    contrast=0.0,
-    blur=0.0,
-    noise=0.0,
-    
+    hsv_h=0.015,                     # Hue gain (0-1)
+    hsv_s=0.7,                       # Saturation gain (0-1)
+    hsv_v=0.4,                       # Value gain (0-1)
+    brightness=0.0,                  # Brightness change probability (0-1)
+    contrast=0.0,                    # Contrast change probability (0-1)
+    blur=0.0,                        # Gaussian blur probability (0-1)
+    noise=0.0,                       # Noise probability (0-1)
+    noise_type='gaussian_mono',      # 'gaussian_mono', 'gaussian_rgb', 'salt_pepper'
+
     # Geometric
-    degrees=0.0,
-    translate=0.1,
-    scale=0.5,
-    shear=0.0,
-    perspective=0.0,
-    fliplr=0.5,
-    flipud=0.0,
-    
-    # Erasing (box-aware)
-    erasing=0.0,
-    erasing_min_visible=0.5,
-    erasing_min_box_size=20,
+    degrees=0.0,                     # Max rotation (± degrees)
+    translate=0.1,                   # Max translation (fraction)
+    scale=0.5,                       # Scale range (± scale)
+    shear=0.0,                       # Max shear (degrees)
+    perspective=0.0,                 # Perspective distortion (0-0.001)
+    fliplr=0.5,                      # Horizontal flip (0-1)
+    flipud=0.0,                      # Vertical flip (0-1)
+
+    # Random Erasing
+    erasing=0.0,                     # Probability (0-1)
+    erasing_value=128,               # Fill: 0=black, 128=gray, 'random'=noise
+
+    # =================================================================
+    # FINE-TUNING (good defaults, rarely need changing)
+    # =================================================================
+
+    # Mosaic
+    mosaic_scale=(0.5, 1.5),         # Center point range
+    mosaic_min_box_size=2,           # Min box size after mosaic (px)
+
+    # MixUp
+    mixup_alpha=32.0,                # Beta distribution alpha
+
+    # CutMix
+    cutmix_alpha=1.0,                # Beta distribution alpha
+    cutmix_min_visible=0.3,          # Min visible box ratio
+    cutmix_min_box_size=10,          # Min box size (px)
+    cutmix_overlap_thresh=0.1,       # Overlap below this keeps box unchanged
+
+    # Color ranges
+    brightness_range=(0.5, 1.5),     # Brightness multiplier range
+    contrast_range=(0.5, 1.5),       # Contrast multiplier range
+    blur_kernel_range=(3, 7),        # Blur kernel size (odd numbers)
+    noise_strength=(5.0, 30.0),      # Gaussian noise std dev range
+    salt_pepper_amount=0.02,         # Salt-and-pepper pixel fraction
+
+    # Erasing
+    erasing_min_scale=0.02,          # Min erased area fraction
+    erasing_max_scale=0.33,          # Max erased area fraction
+    erasing_ratio=(0.3, 3.3),       # Aspect ratio range
+    erasing_min_visible=0.5,         # Min visible box ratio
+    erasing_min_box_size=20,         # Min box size (px)
 )
 ```
 
@@ -559,19 +613,24 @@ class RFDETRDataset(torch.utils.data.Dataset):
 
 | Feature | Ultralytics YOLO | This Project |
 |---------|------------------|--------------|
-| Mosaic | Yes | Yes |
-| MixUp | Yes | Yes |
-| CutMix | Yes | Yes (box-aware) |
+| Mosaic | Yes | Yes (configurable center range) |
+| MixUp | Yes | Yes (configurable alpha) |
+| CutMix | Yes | Yes (box-aware, configurable overlap threshold) |
 | RandomHSV | Yes | Yes |
+| Brightness/Contrast | Yes | Yes (configurable ranges) |
+| Blur | Yes | Yes (configurable kernel range) |
+| Noise | Limited | 3 types: Gaussian mono, Gaussian RGB, Salt-and-pepper |
 | RandomPerspective | Yes | Yes |
-| RandomErasing | Yes | Yes (box-aware) |
+| RandomErasing | Yes | Yes (box-aware, configurable fill/scale/ratio) |
 | close_mosaic | Yes | Yes |
 | Confusion Matrix | Yes | Yes |
 | PR/F1 Curves | Yes | Yes |
 | Batch Visualizations | Yes | Yes |
+| Augmentation Preview | No | Yes (`tests/preview_augmentations.py`) |
 | Markdown Reports | No | Yes |
 | Augmentation Logging | Yes | Yes |
 | ONNX Auto-Detect | No | Yes |
+| Zero Magic Numbers | No | Yes (all params in AugmentationConfig) |
 
 ---
 

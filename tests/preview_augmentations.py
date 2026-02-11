@@ -58,64 +58,87 @@ SPLIT = "train"
 
 
 # =============================================================================
-# КОНФІГУРАЦІЯ АУГМЕНТАЦІЙ (ULTRALYTICS-STYLE)
+# КОНФІГУРАЦІЯ АУГМЕНТАЦІЙ
+# =============================================================================
+# Конфіг розділений на 2 частини:
+#   1. ОСНОВНІ — ймовірності та сила аугментацій (що включити і як часто)
+#   2. ТОНКІ НАЛАШТУВАННЯ — діапазони, пороги, ліміти (зазвичай змінювати не потрібно)
 # =============================================================================
 AUGMENTATION_CONFIG = AugmentationConfig(
-    # -------------------------------------------------------------------------
-    # ПРИМІТКА: Розмір зображення (imgsz) — цільова роздільність після аугментацій.
-    # При тренуванні синхронізується з моделлю, тут задайте вручну:
-    # Nano=384, Small=512, Medium=576, Base=560, Large=704, XLarge=700, 2XLarge=880
-    # -------------------------------------------------------------------------
+
+    # =========================================================================
+    # ОСНОВНІ ПАРАМЕТРИ
+    # =========================================================================
+
+    # Розмір зображення (Nano=384, Small=512, Medium=576, Base=560, Large=704)
     imgsz=576,
 
-    # -------------------------------------------------------------------------
-    # HSV аугментації (Hue, Saturation, Value)
-    # -------------------------------------------------------------------------
-    hsv_h=0.0,                       # Hue gain (0-1)
-    hsv_s=0.0,                       # Saturation gain (0-1)
-    hsv_v=0.4,                       # Value gain (0-1)
+    # --- Композитні (об'єднання кількох зображень) ---
+    mosaic=0.5,                      # Mosaic: 4 зображення в одне (0-1)
+    close_mosaic=5,                  # Вимкнути Mosaic в останніх N епохах
+    mixup=0.1,                       # MixUp: альфа-блендинг 2 зображень (0-1)
+    cutmix=0.2,                      # CutMix: вирізання регіону з іншого зображення (0-1)
 
-    # -------------------------------------------------------------------------
-    # Додаткові колірні аугментації
-    # -------------------------------------------------------------------------
+    # --- Колірні ---
+    hsv_h=0.0,                       # Зміна відтінку Hue (0-1)
+    hsv_s=0.0,                       # Зміна насиченості Saturation (0-1)
+    hsv_v=0.4,                       # Зміна яскравості Value (0-1)
     brightness=0.2,                  # Ймовірність зміни яскравості (0-1)
     contrast=0.2,                    # Ймовірність зміни контрасту (0-1)
     blur=0.1,                        # Ймовірність Gaussian blur (0-1)
-    noise=0.2,                       # Ймовірність Gaussian noise (0-1)
+    noise=0.2,                       # Ймовірність шуму (0-1)
+    noise_type='gaussian_mono',      # Тип: 'gaussian_mono' (IR), 'gaussian_rgb' (RGB), 'salt_pepper'
 
-    # -------------------------------------------------------------------------
-    # Геометричні трансформації (RandomPerspective)
-    # -------------------------------------------------------------------------
-    degrees=10.0,                    # Максимальний поворот (+/- degrees)
-    translate=0.1,                   # Максимальний зсув (fraction від розміру)
-    scale=0.5,                       # Масштаб
-    shear=0.0,                       # Зсув перспективи
-    perspective=0.0,                 # Перспективна деформація
+    # --- Геометричні ---
+    degrees=10.0,                    # Максимальний поворот (+/- градуси)
+    translate=0.1,                   # Максимальний зсув (частка від розміру зображення)
+    scale=0.5,                       # Масштаб (+/- scale)
+    shear=0.0,                       # Зсув перспективи (градуси)
+    perspective=0.0,                 # Перспективна деформація (0-0.001)
 
-    # -------------------------------------------------------------------------
-    # Відзеркалення (Flip)
-    # -------------------------------------------------------------------------
-    fliplr=0.5,                      # Ймовірність горизонтального flip
-    flipud=0.0,                      # Ймовірність вертикального flip
+    # --- Відзеркалення ---
+    fliplr=0.5,                      # Горизонтальний flip (0-1)
+    flipud=0.0,                      # Вертикальний flip (0-1)
 
-    # -------------------------------------------------------------------------
-    # Композитні аугментації
-    # -------------------------------------------------------------------------
-    mosaic=0.5,                      # Mosaic probability
-    mixup=0.1,                       # MixUp probability
-    cutmix=0.2,                      # CutMix probability
-    cutmix_min_visible=0.3,          # CutMix: мін. видима частина боксу
-    cutmix_min_box_size=10,          # CutMix: мін. розмір боксу
-    close_mosaic=5,                  # Вимкнути Mosaic в останніх N епохах
-
-    # -------------------------------------------------------------------------
-    # Random Erasing
-    # -------------------------------------------------------------------------
-    erasing=0.25,                    # Ймовірність Random Erasing
-    erasing_max_scale=0.33,          # Макс. частка площі зображення (0.33 = 33%)
+    # --- Random Erasing (box-aware видалення регіонів) ---
+    erasing=0.25,                    # Ймовірність erasing (0-1)
     erasing_value=128,               # Заповнення: 0=чорний, 128=сірий, 'random'=шум
-    erasing_min_visible=0.5,         # Мін. видима частина боксу
-    erasing_min_box_size=20,         # Мін. розмір боксу після erasing
+
+    # =========================================================================
+    # ТОНКІ НАЛАШТУВАННЯ (зазвичай змінювати не потрібно)
+    # =========================================================================
+
+    # Mosaic
+    mosaic_scale=(0.5, 1.5),         # Діапазон центру мозаїки (частка від imgsz)
+    mosaic_min_box_size=2,           # Мін. розмір боксу після мозаїки (пікселі)
+
+    # MixUp
+    mixup_alpha=32.0,                # Beta-розподіл alpha (більше = слабше змішування)
+
+    # CutMix
+    cutmix_alpha=1.0,                # Beta-розподіл alpha (1.0 = рівномірний розмір вирізу)
+    cutmix_min_visible=0.3,          # Мін. видима частина боксу (0-1)
+    cutmix_min_box_size=10,          # Мін. розмір боксу після обрізання (пікселі)
+    cutmix_overlap_thresh=0.1,       # Поріг перекриття нижче якого бокс не змінюється (0-1)
+
+    # Яскравість / Контраст / Blur
+    brightness_range=(0.5, 1.5),     # Діапазон множника яскравості
+    contrast_range=(0.5, 1.5),       # Діапазон множника контрасту
+    blur_kernel_range=(3, 7),        # Розмір ядра blur (непарні числа)
+
+    # Шум
+    noise_strength=(5.0, 30.0),      # Сила Gaussian шуму (std dev min, max)
+    salt_pepper_amount=0.02,         # Частка пікселів для salt-and-pepper (0-1)
+
+    # Random Erasing
+    erasing_min_scale=0.02,          # Мін. частка площі зображення (0-1)
+    erasing_max_scale=0.33,          # Макс. частка площі зображення (0-1)
+    erasing_ratio=(0.3, 3.3),       # Діапазон aspect ratio вирізаного регіону
+    erasing_min_visible=0.5,         # Мін. видима частина боксу (0-1)
+    erasing_min_box_size=20,         # Мін. розмір боксу після erasing (пікселі)
+
+    # LetterBox / Padding
+    letterbox_color=(114, 114, 114), # Колір padding (R,G,B). (0,0,0) для IR камер
 )
 
 
@@ -261,23 +284,26 @@ def main():
     print(f"Папка: {OUTPUT_DIR.resolve()}")
 
     # Інформація про конфігурацію аугментацій
+    cfg = AUGMENTATION_CONFIG
     print("\nКонфігурація аугментацій:")
-    print(f"  Mosaic:     {AUGMENTATION_CONFIG.mosaic}")
-    print(f"  MixUp:      {AUGMENTATION_CONFIG.mixup}")
-    print(f"  CutMix:     {AUGMENTATION_CONFIG.cutmix}")
-    print(f"  HSV:        h={AUGMENTATION_CONFIG.hsv_h}, "
-          f"s={AUGMENTATION_CONFIG.hsv_s}, v={AUGMENTATION_CONFIG.hsv_v}")
-    print(f"  Brightness: {AUGMENTATION_CONFIG.brightness}")
-    print(f"  Contrast:   {AUGMENTATION_CONFIG.contrast}")
-    print(f"  Blur:       {AUGMENTATION_CONFIG.blur}")
-    print(f"  Noise:      {AUGMENTATION_CONFIG.noise}")
-    print(f"  Degrees:    {AUGMENTATION_CONFIG.degrees}")
-    print(f"  Translate:  {AUGMENTATION_CONFIG.translate}")
-    print(f"  Scale:      {AUGMENTATION_CONFIG.scale}")
-    print(f"  FlipLR:     {AUGMENTATION_CONFIG.fliplr}")
-    print(f"  FlipUD:     {AUGMENTATION_CONFIG.flipud}")
-    print(f"  Erasing:    {AUGMENTATION_CONFIG.erasing}")
-    print(f"  imgsz:      {AUGMENTATION_CONFIG.imgsz}")
+    print("  --- Основні ---")
+    print(f"  Mosaic:      {cfg.mosaic}  (close_mosaic={cfg.close_mosaic})")
+    print(f"  MixUp:       {cfg.mixup}")
+    print(f"  CutMix:      {cfg.cutmix}")
+    print(f"  HSV:         h={cfg.hsv_h}, s={cfg.hsv_s}, v={cfg.hsv_v}")
+    print(f"  Brightness:  {cfg.brightness}  (range={cfg.brightness_range})")
+    print(f"  Contrast:    {cfg.contrast}  (range={cfg.contrast_range})")
+    print(f"  Blur:        {cfg.blur}  (kernel={cfg.blur_kernel_range})")
+    print(f"  Noise:       {cfg.noise}  (type={cfg.noise_type}, "
+          f"strength={cfg.noise_strength})")
+    print(f"  Degrees:     {cfg.degrees}")
+    print(f"  Translate:   {cfg.translate}")
+    print(f"  Scale:       {cfg.scale}")
+    print(f"  FlipLR:      {cfg.fliplr}")
+    print(f"  FlipUD:      {cfg.flipud}")
+    print(f"  Erasing:     {cfg.erasing}  (value={cfg.erasing_value}, "
+          f"scale={cfg.erasing_min_scale}-{cfg.erasing_max_scale})")
+    print(f"  imgsz:       {cfg.imgsz}")
 
 
 if __name__ == '__main__':

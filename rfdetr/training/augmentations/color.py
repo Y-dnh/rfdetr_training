@@ -299,46 +299,118 @@ class RandomBlur(BaseTransform):
 
 class RandomNoise(BaseTransform):
     """
-    Random Gaussian noise.
+    Random noise augmentation with multiple noise types.
+    
+    Supported noise types:
+        - 'gaussian_mono': Monochrome Gaussian noise (same noise per channel).
+          Realistic for IR/thermal cameras and grayscale images.
+        - 'gaussian_rgb': Per-channel Gaussian noise (independent noise per channel).
+          Realistic for color RGB cameras.
+        - 'salt_pepper': Salt-and-pepper (impulse) noise.
+          Random pixels become black (0) or white (255).
+          Characteristic for sensor defects and IR cameras.
     
     Args:
-        noise_range: Range of noise standard deviation (min, max).
+        noise_type: Type of noise ('gaussian_mono', 'gaussian_rgb', 'salt_pepper').
+        noise_range: Range of noise standard deviation (min, max) for Gaussian types.
+        salt_pepper_amount: Fraction of pixels affected (0-1) for salt_pepper type.
         p: Probability of applying the augmentation.
     """
     
+    VALID_TYPES = ('gaussian_mono', 'gaussian_rgb', 'salt_pepper')
+    
     def __init__(
         self, 
+        noise_type: str = 'gaussian_mono',
         noise_range: Tuple[float, float] = (5, 30),
-        p: float = 0.1
+        salt_pepper_amount: float = 0.02,
+        p: float = 0.1,
     ):
         super().__init__(p=p, name='RandomNoise')
+        
+        if noise_type not in self.VALID_TYPES:
+            raise ValueError(
+                f"noise_type must be one of {self.VALID_TYPES}, got '{noise_type}'"
+            )
+        
+        self.noise_type = noise_type
         self.noise_range = noise_range
+        self.salt_pepper_amount = salt_pepper_amount
         self._last_std = 0.0
+        self._last_amount = 0.0
     
     def apply(
         self, 
         image: Union[PIL.Image.Image, np.ndarray], 
         target: Dict[str, Any]
     ) -> Tuple[Union[PIL.Image.Image, np.ndarray], Dict[str, Any]]:
-        """Apply Gaussian noise."""
+        """Apply noise augmentation."""
         is_pil = isinstance(image, PIL.Image.Image)
         if is_pil:
-            img = np.array(image).astype(np.float32)
+            img = np.array(image)
         else:
-            img = image.astype(np.float32)
+            img = image.copy()
         
-        # Random noise standard deviation
-        std = random.uniform(*self.noise_range)
-        self._last_std = std
-        
-        noise = np.random.normal(0, std, img.shape)
-        img = img + noise
-        img = np.clip(img, 0, 255).astype(np.uint8)
+        if self.noise_type == 'gaussian_mono':
+            img = self._apply_gaussian_mono(img)
+        elif self.noise_type == 'gaussian_rgb':
+            img = self._apply_gaussian_rgb(img)
+        elif self.noise_type == 'salt_pepper':
+            img = self._apply_salt_pepper(img)
         
         if is_pil:
             img = PIL.Image.fromarray(img)
         
         return img, target
     
+    def _apply_gaussian_mono(self, img: np.ndarray) -> np.ndarray:
+        """Monochrome Gaussian noise -- same noise value for all channels per pixel."""
+        h, w = img.shape[:2]
+        std = random.uniform(*self.noise_range)
+        self._last_std = std
+        
+        # Generate single-channel noise and broadcast to all channels
+        noise = np.random.normal(0, std, (h, w)).astype(np.float32)
+        if img.ndim == 3:
+            noise = noise[:, :, np.newaxis]
+        
+        result = img.astype(np.float32) + noise
+        return np.clip(result, 0, 255).astype(np.uint8)
+    
+    def _apply_gaussian_rgb(self, img: np.ndarray) -> np.ndarray:
+        """Per-channel Gaussian noise -- independent noise per channel."""
+        std = random.uniform(*self.noise_range)
+        self._last_std = std
+        
+        noise = np.random.normal(0, std, img.shape).astype(np.float32)
+        result = img.astype(np.float32) + noise
+        return np.clip(result, 0, 255).astype(np.uint8)
+    
+    def _apply_salt_pepper(self, img: np.ndarray) -> np.ndarray:
+        """Salt-and-pepper noise -- random pixels become black or white."""
+        amount = random.uniform(self.salt_pepper_amount * 0.5, self.salt_pepper_amount)
+        self._last_amount = amount
+        
+        result = img.copy()
+        h, w = img.shape[:2]
+        num_pixels = int(amount * h * w)
+        
+        # Salt (white pixels)
+        salt_y = np.random.randint(0, h, num_pixels)
+        salt_x = np.random.randint(0, w, num_pixels)
+        result[salt_y, salt_x] = 255
+        
+        # Pepper (black pixels)
+        pepper_y = np.random.randint(0, h, num_pixels)
+        pepper_x = np.random.randint(0, w, num_pixels)
+        result[pepper_y, pepper_x] = 0
+        
+        return result
+    
     def get_parameters(self) -> Dict[str, Any]:
-        return {'noise_range': self.noise_range, 'std': self._last_std}
+        return {
+            'noise_type': self.noise_type,
+            'noise_range': self.noise_range,
+            'std': self._last_std,
+            'salt_pepper_amount': self._last_amount,
+        }

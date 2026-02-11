@@ -85,6 +85,9 @@ class AugmentationPipeline:
             self.mosaic = Mosaic(
                 dataset=self.dataset,
                 imgsz=cfg.imgsz,
+                mosaic_scale=cfg.mosaic_scale,
+                min_box_size=cfg.mosaic_min_box_size,
+                fill_color=cfg.letterbox_color,
                 p=cfg.mosaic,
             )
             
@@ -94,22 +97,24 @@ class AugmentationPipeline:
                 scale=cfg.scale,
                 shear=cfg.shear,
                 perspective=cfg.perspective,
+                fill_color=cfg.letterbox_color,
                 p=1.0 if (cfg.degrees > 0 or cfg.translate > 0 or cfg.scale > 0 
                           or cfg.shear > 0 or cfg.perspective > 0) else 0.0,
             )
             
             self.mixup = MixUp(
                 dataset=self.dataset,
-                alpha=32.0,
+                alpha=cfg.mixup_alpha,
                 p=cfg.mixup,
             )
             
             self.cutmix = CutMix(
                 dataset=self.dataset,
-                alpha=1.0,
+                alpha=cfg.cutmix_alpha,
                 p=cfg.cutmix,
                 min_visible_ratio=cfg.cutmix_min_visible,
                 min_box_size=cfg.cutmix_min_box_size,
+                overlap_thresh=cfg.cutmix_overlap_thresh,
             )
             
             self.hsv = RandomHSV(
@@ -121,22 +126,24 @@ class AugmentationPipeline:
             
             # Additional color augmentations
             self.brightness = RandomBrightness(
-                brightness_range=(0.5, 1.5),
+                brightness_range=cfg.brightness_range,
                 p=cfg.brightness,
             )
             
             self.contrast = RandomContrast(
-                contrast_range=(0.5, 1.5),
+                contrast_range=cfg.contrast_range,
                 p=cfg.contrast,
             )
             
             self.blur = RandomBlur(
-                kernel_size_range=(3, 7),
+                kernel_size_range=cfg.blur_kernel_range,
                 p=cfg.blur,
             )
             
             self.noise = RandomNoise(
-                noise_range=(5, 30),
+                noise_type=cfg.noise_type,
+                noise_range=cfg.noise_strength,
+                salt_pepper_amount=cfg.salt_pepper_amount,
                 p=cfg.noise,
             )
             
@@ -152,8 +159,8 @@ class AugmentationPipeline:
             
             self.erasing = RandomErasing(
                 p=cfg.erasing,
-                scale=(0.02, cfg.erasing_max_scale),
-                ratio=(0.3, 3.3),
+                scale=(cfg.erasing_min_scale, cfg.erasing_max_scale),
+                ratio=cfg.erasing_ratio,
                 value=cfg.erasing_value,
                 min_visible_ratio=cfg.erasing_min_visible,
                 min_box_size=cfg.erasing_min_box_size,
@@ -163,6 +170,7 @@ class AugmentationPipeline:
         # Common transforms (train and val)
         self.letterbox = LetterBox(
             new_shape=cfg.imgsz,
+            color=cfg.letterbox_color,
             p=1.0,
         )
         

@@ -15,91 +15,94 @@ import warnings
 @dataclass
 class AugmentationConfig:
     """
-    Configuration for data augmentations (YOLO-style parameters).
+    Configuration for data augmentations.
     
-    All probability parameters are in range [0.0, 1.0].
-    All gain/factor parameters follow Ultralytics conventions.
+    The config is split into two sections:
+    1. ОСНОВНІ ПАРАМЕТРИ — augmentation probabilities/gains (what to enable and how often)
+    2. ТОНКІ НАЛАШТУВАННЯ — fine-tuning parameters (ranges, thresholds, limits)
     
-    Attributes:
-        # Mosaic augmentation
-        mosaic: Probability of applying mosaic augmentation.
-        mosaic_scale: Scale range for mosaic (min, max).
-        close_mosaic: Number of epochs before end to disable mosaic.
-        
-        # MixUp augmentation
-        mixup: Probability of applying mixup augmentation.
-        
-        # CutMix augmentation
-        cutmix: Probability of applying cutmix augmentation.
-        
-        # HSV augmentation
-        hsv_h: Hue gain factor (0.0-1.0).
-        hsv_s: Saturation gain factor (0.0-1.0).
-        hsv_v: Value gain factor (0.0-1.0).
-        
-        # Geometric augmentations
-        degrees: Maximum rotation degrees.
-        translate: Maximum translation as fraction of image size.
-        scale: Scale range (min, max) as fraction.
-        shear: Maximum shear degrees.
-        perspective: Perspective distortion factor.
-        fliplr: Probability of horizontal flip.
-        flipud: Probability of vertical flip.
-        
-        # Random erasing
-        erasing: Probability of random erasing.
-        
-        # Additional color augmentations
-        brightness: Probability of random brightness adjustment.
-        contrast: Probability of random contrast adjustment.
-        blur: Probability of random Gaussian blur.
-        noise: Probability of random Gaussian noise.
-        
-        # Image size
-        imgsz: Target image size (height, width) or single int for square.
+    Most users only need to adjust the main parameters.
+    Fine-tuning defaults work well for most use cases.
     """
-    # Mosaic
-    mosaic: float = 1.0
-    mosaic_scale: Tuple[float, float] = (0.5, 1.5)
-    close_mosaic: int = 10
     
-    # MixUp
-    mixup: float = 0.0
+    # =====================================================================
+    # ОСНОВНІ ПАРАМЕТРИ (ймовірності та сила аугментацій)
+    # =====================================================================
     
-    # CutMix (box-aware)
-    cutmix: float = 0.0
-    cutmix_min_visible: float = 0.3   # Min ratio of box that must remain visible
-    cutmix_min_box_size: int = 10     # Min box dimension after clipping
-    
-    # HSV
-    hsv_h: float = 0.015
-    hsv_s: float = 0.7
-    hsv_v: float = 0.4
-    
-    # Additional color augmentations
-    brightness: float = 0.0
-    contrast: float = 0.0
-    blur: float = 0.0
-    noise: float = 0.0
-    
-    # Geometric
-    degrees: float = 0.0
-    translate: float = 0.1
-    scale: float = 0.5
-    shear: float = 0.0
-    perspective: float = 0.0
-    fliplr: float = 0.5
-    flipud: float = 0.0
-    
-    # Random erasing (box-aware)
-    erasing: float = 0.0
-    erasing_max_scale: float = 0.33    # Max fraction of image area to erase (0-1)
-    erasing_min_visible: float = 0.5   # Min ratio of box that must remain visible (0-1)
-    erasing_min_box_size: int = 20     # Min box dimension after erasing (pixels)
-    erasing_value: Union[str, float] = 128  # Fill value: 'random'=noise, 0=black, 128=gray, 255=white
-    
-    # Image size
+    # Image size (auto-detected from model: Nano=384, Small=512, Medium=576, etc.)
+    # При тренуванні перезаписується автоматично. Вказуйте вручну тільки для preview.
     imgsz: int = 640
+    
+    # Mosaic (combines 4 images into one)
+    mosaic: float = 1.0               # Probability (0-1)
+    close_mosaic: int = 10            # Disable mosaic in last N epochs
+    
+    # MixUp (alpha-blending of 2 images)
+    mixup: float = 0.0                # Probability (0-1)
+    
+    # CutMix (cut-paste region from another image)
+    cutmix: float = 0.0               # Probability (0-1)
+    
+    # HSV color augmentation
+    hsv_h: float = 0.015              # Hue gain (0-1)
+    hsv_s: float = 0.7                # Saturation gain (0-1)
+    hsv_v: float = 0.4                # Value/brightness gain (0-1)
+    
+    # Color augmentations
+    brightness: float = 0.0           # Probability of brightness change (0-1)
+    contrast: float = 0.0             # Probability of contrast change (0-1)
+    blur: float = 0.0                 # Probability of Gaussian blur (0-1)
+    noise: float = 0.0                # Probability of noise (0-1)
+    noise_type: str = 'gaussian_mono' # 'gaussian_mono' (IR), 'gaussian_rgb' (color), 'salt_pepper'
+    
+    # Geometric augmentations
+    degrees: float = 0.0              # Max rotation (+/- degrees)
+    translate: float = 0.1            # Max translation (fraction of image size)
+    scale: float = 0.5                # Scale range (+/- scale)
+    shear: float = 0.0                # Max shear (degrees)
+    perspective: float = 0.0          # Perspective distortion (0-0.001)
+    
+    # Flip
+    fliplr: float = 0.5               # Horizontal flip probability (0-1)
+    flipud: float = 0.0               # Vertical flip probability (0-1)
+    
+    # Random Erasing (box-aware region erasing)
+    erasing: float = 0.0              # Probability (0-1)
+    erasing_value: Union[str, float] = 128  # Fill: 0=black, 128=gray, 'random'=noise
+    
+    # =====================================================================
+    # ТОНКІ НАЛАШТУВАННЯ (зазвичай змінювати не потрібно)
+    # =====================================================================
+    
+    # Mosaic fine-tuning
+    mosaic_scale: Tuple[float, float] = (0.5, 1.5)  # Center point range (fraction of imgsz)
+    mosaic_min_box_size: int = 2      # Min box size after mosaic (pixels)
+    
+    # MixUp fine-tuning
+    mixup_alpha: float = 32.0         # Beta distribution alpha (higher = weaker mixing)
+    
+    # CutMix fine-tuning
+    cutmix_alpha: float = 1.0         # Beta distribution alpha (1.0 = uniform cut size)
+    cutmix_min_visible: float = 0.3   # Min visible ratio of box (0-1)
+    cutmix_min_box_size: int = 10     # Min box size after clipping (pixels)
+    cutmix_overlap_thresh: float = 0.1  # Overlap below this keeps box unchanged (0-1)
+    
+    # Color fine-tuning
+    brightness_range: Tuple[float, float] = (0.5, 1.5)  # Brightness multiplier range
+    contrast_range: Tuple[float, float] = (0.5, 1.5)    # Contrast multiplier range
+    blur_kernel_range: Tuple[int, int] = (3, 7)          # Blur kernel size range (odd numbers)
+    noise_strength: Tuple[float, float] = (5.0, 30.0)    # Gaussian noise std dev range
+    salt_pepper_amount: float = 0.02                      # Salt-and-pepper pixel fraction (0-1)
+    
+    # Random Erasing fine-tuning
+    erasing_min_scale: float = 0.02    # Min erased area fraction (0-1)
+    erasing_max_scale: float = 0.33    # Max erased area fraction (0-1)
+    erasing_ratio: Tuple[float, float] = (0.3, 3.3)  # Aspect ratio range of erased region
+    erasing_min_visible: float = 0.5   # Min visible ratio of box (0-1)
+    erasing_min_box_size: int = 20     # Min box size after erasing (pixels)
+    
+    # LetterBox fine-tuning
+    letterbox_color: Tuple[int, int, int] = (114, 114, 114)  # Padding fill color (R,G,B). Use (0,0,0) for IR
     
     def __post_init__(self):
         """Validate configuration values."""
@@ -135,30 +138,9 @@ class AugmentationConfig:
             raise ValueError(f"imgsz must be > 0, got {self.imgsz}")
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary."""
-        return {
-            'mosaic': self.mosaic,
-            'mosaic_scale': self.mosaic_scale,
-            'close_mosaic': self.close_mosaic,
-            'mixup': self.mixup,
-            'cutmix': self.cutmix,
-            'hsv_h': self.hsv_h,
-            'hsv_s': self.hsv_s,
-            'hsv_v': self.hsv_v,
-            'brightness': self.brightness,
-            'contrast': self.contrast,
-            'blur': self.blur,
-            'noise': self.noise,
-            'degrees': self.degrees,
-            'translate': self.translate,
-            'scale': self.scale,
-            'shear': self.shear,
-            'perspective': self.perspective,
-            'fliplr': self.fliplr,
-            'flipud': self.flipud,
-            'erasing': self.erasing,
-            'imgsz': self.imgsz,
-        }
+        """Convert config to dictionary (all fields)."""
+        import dataclasses
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'AugmentationConfig':
@@ -274,14 +256,17 @@ class ModelConfig:
             - 'l' (large): 704×704, ~33.9M params
             - 'xl' (xlarge): 700×700, ~126.4M params (requires platform license)
             - '2xl' (2xlarge): 880×880, ~126.9M params (requires platform license)
-        num_classes: Number of detection classes.
+        num_classes: NOT USED during training (auto-detected from dataset COCO JSON).
+            Kept for serialization/logging purposes only.
         pretrained_weights: Path to pretrained weights or None.
         freeze_encoder: Whether to freeze the encoder.
         freeze_encoder_epochs: Number of epochs to keep encoder frozen.
         accept_platform_license: Required for xl/2xl models (Platform Model License 1.0).
     """
     model_size: str = 'b'  # base
-    num_classes: int = 80  # COCO classes
+    # num_classes auto-detected from COCO JSON annotations at training time.
+    # This field is only used for serialization/logging.
+    num_classes: int = 80
     pretrained_weights: Optional[str] = None
     freeze_encoder: bool = False
     freeze_encoder_epochs: int = 0

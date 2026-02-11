@@ -40,6 +40,9 @@ class Mosaic(BaseTransform):
         self,
         dataset: Any = None,
         imgsz: int = 640,
+        mosaic_scale: Tuple[float, float] = (0.5, 1.5),
+        min_box_size: int = 2,
+        fill_color: Tuple[int, int, int] = (114, 114, 114),
         p: float = 1.0,
         border: Optional[Tuple[int, int]] = None,
     ):
@@ -47,6 +50,9 @@ class Mosaic(BaseTransform):
         
         self.dataset = dataset
         self.imgsz = imgsz
+        self.mosaic_scale = mosaic_scale
+        self.min_box_size = min_box_size
+        self.fill_color = fill_color
         self.border = border if border is not None else (-imgsz // 2, -imgsz // 2)
         
         # Store info about last mosaic for logging
@@ -137,12 +143,12 @@ class Mosaic(BaseTransform):
         s = self.imgsz
         
         # Random center point
-        yc = int(random.uniform(s * 0.5, s * 1.5))
-        xc = int(random.uniform(s * 0.5, s * 1.5))
+        yc = int(random.uniform(s * self.mosaic_scale[0], s * self.mosaic_scale[1]))
+        xc = int(random.uniform(s * self.mosaic_scale[0], s * self.mosaic_scale[1]))
         self._last_center = (xc, yc)
         
         # Initialize mosaic image and labels
-        mosaic_img = np.full((s * 2, s * 2, 3), 114, dtype=np.uint8)
+        mosaic_img = np.full((s * 2, s * 2, 3), self.fill_color, dtype=np.uint8)
         mosaic_boxes = []
         mosaic_labels = []
         
@@ -214,7 +220,7 @@ class Mosaic(BaseTransform):
             final_boxes = clip_boxes(final_boxes, (s * 2, s * 2))
             
             # Filter small/invalid boxes
-            final_boxes, keep = filter_small_boxes(final_boxes, min_size=2)
+            final_boxes, keep = filter_small_boxes(final_boxes, min_size=self.min_box_size)
             final_labels = final_labels[keep]
         else:
             final_boxes = torch.zeros((0, 4), dtype=torch.float32)
@@ -238,7 +244,7 @@ class Mosaic(BaseTransform):
             
             # Clip again after crop
             final_boxes = clip_boxes(final_boxes, (s, s))
-            final_boxes, keep = filter_small_boxes(final_boxes, min_size=2)
+            final_boxes, keep = filter_small_boxes(final_boxes, min_size=self.min_box_size)
             final_labels = final_labels[keep]
         
         # Build output target
@@ -338,12 +344,16 @@ class Mosaic9(BaseTransform):
         self,
         dataset: Any = None,
         imgsz: int = 640,
+        min_box_size: int = 2,
+        fill_color: Tuple[int, int, int] = (114, 114, 114),
         p: float = 1.0,
     ):
         super().__init__(p=p, name='Mosaic9')
         
         self.dataset = dataset
         self.imgsz = imgsz
+        self.min_box_size = min_box_size
+        self.fill_color = fill_color
         self._last_indices = []
     
     def set_dataset(self, dataset: Any) -> None:
@@ -369,7 +379,7 @@ class Mosaic9(BaseTransform):
         self._last_indices = indices
         
         # Create 3x3 mosaic
-        mosaic_img = np.full((s * 3, s * 3, 3), 114, dtype=np.uint8)
+        mosaic_img = np.full((s * 3, s * 3, 3), self.fill_color, dtype=np.uint8)
         mosaic_boxes = []
         mosaic_labels = []
         
@@ -430,7 +440,7 @@ class Mosaic9(BaseTransform):
             
             # Clip to mosaic bounds
             final_boxes = clip_boxes(final_boxes, (s * 3, s * 3))
-            final_boxes, keep = filter_small_boxes(final_boxes, min_size=2)
+            final_boxes, keep = filter_small_boxes(final_boxes, min_size=self.min_box_size)
             final_labels = final_labels[keep]
         else:
             final_boxes = torch.zeros((0, 4), dtype=torch.float32)
@@ -446,7 +456,7 @@ class Mosaic9(BaseTransform):
             final_boxes[:, [1, 3]] -= crop_start
             
             final_boxes = clip_boxes(final_boxes, (s, s))
-            final_boxes, keep = filter_small_boxes(final_boxes, min_size=2)
+            final_boxes, keep = filter_small_boxes(final_boxes, min_size=self.min_box_size)
             final_labels = final_labels[keep]
         
         new_target = {

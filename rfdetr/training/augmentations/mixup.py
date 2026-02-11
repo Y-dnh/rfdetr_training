@@ -225,6 +225,7 @@ class CutMix(BaseTransform):
         p: float = 0.0,  # Disabled by default
         min_visible_ratio: float = 0.3,
         min_box_size: int = 10,
+        overlap_thresh: float = 0.1,
     ):
         super().__init__(p=p, name='CutMix')
         
@@ -232,6 +233,7 @@ class CutMix(BaseTransform):
         self.alpha = alpha
         self.min_visible_ratio = min_visible_ratio
         self.min_box_size = min_box_size
+        self.overlap_thresh = overlap_thresh
         
         self._last_bbox = (0, 0, 0, 0)
         self._last_index2 = -1
@@ -387,7 +389,7 @@ class CutMix(BaseTransform):
                 continue
             
             # If small overlap - keep original box
-            if overlap_ratio < 0.1:
+            if overlap_ratio < self.overlap_thresh:
                 final_boxes.append(box)
                 final_labels.append(labels1[i])
                 continue

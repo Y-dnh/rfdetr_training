@@ -77,7 +77,7 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
     # Model config
     model_config = ModelConfig(
         model_size=config['size'],
-        num_classes=4,  # DPSU dataset has 4 classes
+        # num_classes — автоматично з COCO JSON датасету
         accept_platform_license=config.get('accept_platform_license', False),
     )
     
@@ -97,34 +97,53 @@ def train_model(model_name: str, config: dict, dataset_dir: str, output_base: st
     )
     
     aug_config = AugmentationConfig(
+        # --- Основні ---
+        mosaic=1.0,
+        close_mosaic=0,                  # 1 епоха — без close_mosaic
+        mixup=0.0,
+        cutmix=0.0,
 
-    hsv_h=0.0,                       
-    hsv_s=0.0,                       
-    hsv_v=0.4,                       
-    
-    brightness=0.2,                  
-    contrast=0.2,                    
-    blur=0.1,                        
-    noise=0.0,                       
-    
-    degrees=10.0,                    
-    translate=0.1,                   
-    scale=0.0,                       
-    shear=0.0,                       
-    perspective=0.0,                    
-    fliplr=0.5,                      
-    flipud=0.0,                       
-    mosaic=1.0,                      
-    mixup=0.0,                       
-    cutmix=0.0,                          
-    cutmix_min_visible=0.3,              
-    cutmix_min_box_size=10,          
-    close_mosaic=19,                 
-    
-    erasing=0.25,                     
-    erasing_min_visible=0.5,          
-    erasing_min_box_size=20,   
-)      
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.4,
+        brightness=0.2,
+        contrast=0.2,
+        blur=0.1,
+        noise=0.0,
+        noise_type='gaussian_mono',
+
+        degrees=10.0,
+        translate=0.1,
+        scale=0.0,
+        shear=0.0,
+        perspective=0.0,
+
+        fliplr=0.5,
+        flipud=0.0,
+
+        erasing=0.25,
+        erasing_value=128,
+
+        # --- Тонкі налаштування ---
+        mosaic_scale=(0.5, 1.5),
+        mosaic_min_box_size=2,
+        mixup_alpha=32.0,
+        cutmix_alpha=1.0,
+        cutmix_min_visible=0.3,
+        cutmix_min_box_size=10,
+        cutmix_overlap_thresh=0.1,
+        brightness_range=(0.5, 1.5),
+        contrast_range=(0.5, 1.5),
+        blur_kernel_range=(3, 7),
+        noise_strength=(5.0, 30.0),
+        salt_pepper_amount=0.02,
+        erasing_min_scale=0.02,
+        erasing_max_scale=0.33,
+        erasing_ratio=(0.3, 3.3),
+        erasing_min_visible=0.5,
+        erasing_min_box_size=20,
+        letterbox_color=(114, 114, 114),
+    )      
     
     print(f"Model size: {config['size']}")
     print(f"Resolution: {config['resolution']}")

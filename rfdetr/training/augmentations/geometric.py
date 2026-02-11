@@ -126,6 +126,7 @@ class RandomPerspective(BaseTransform):
         shear: float = 0.0,
         perspective: float = 0.0,
         border: Tuple[int, int] = (0, 0),
+        fill_color: Tuple[int, int, int] = (114, 114, 114),
         p: float = 1.0
     ):
         super().__init__(p=p, name='RandomPerspective')
@@ -136,6 +137,7 @@ class RandomPerspective(BaseTransform):
         self.shear = shear
         self.perspective = perspective
         self.border = border
+        self.fill_color = fill_color
         
         # Store last transformation matrix
         self._last_matrix = None
@@ -208,14 +210,14 @@ class RandomPerspective(BaseTransform):
             img = cv2.warpPerspective(
                 img, M, (new_width, new_height),
                 borderMode=cv2.BORDER_CONSTANT,
-                borderValue=(114, 114, 114)
+                borderValue=self.fill_color,
             )
         else:
             # Affine transformation (faster)
             img = cv2.warpAffine(
                 img, M[:2], (new_width, new_height),
                 borderMode=cv2.BORDER_CONSTANT,
-                borderValue=(114, 114, 114)
+                borderValue=self.fill_color,
             )
         
         # Transform boxes

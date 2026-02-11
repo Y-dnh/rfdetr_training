@@ -163,8 +163,8 @@ def main():
     print(f"Testing all model sizes: {list(MODEL_CONFIGS.keys())}")
     print("=" * 80)
     
-    dataset_dir = project_root / "test_dataset"
-    runs_dir = project_root / "runs"
+    dataset_dir = project_root / "tests" / "test_dataset"
+    runs_dir = project_root / "tests" / "runs"
     
     if not dataset_dir.exists():
         print(f"ERROR: Dataset not found at {dataset_dir}")
