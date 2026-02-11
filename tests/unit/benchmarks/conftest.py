@@ -14,7 +14,7 @@ import pytest
 from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
 from rfdetr.util.utils import seed_all
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = PROJECT_ROOT / "data"
 
 _COCO_URLS = {

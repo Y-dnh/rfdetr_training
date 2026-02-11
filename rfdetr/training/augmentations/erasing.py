@@ -28,8 +28,10 @@ class RandomErasing(BaseTransform):
         scale: Range of proportion of erased area against input image.
         ratio: Range of aspect ratio of erased area.
         value: Erasing value. Can be:
-               - 'random': Fill with random values
-               - float: Fill with single value (grayscale)
+               - 'random': Fill with random noise
+               - 0: Fill with black
+               - 128: Fill with gray (default, recommended)
+               - 255: Fill with white
                - tuple of 3 floats: Fill with RGB value
         inplace: Whether to do erasing in-place.
         min_visible_ratio: Minimum ratio of box area that must remain visible (0-1).
@@ -54,7 +56,7 @@ class RandomErasing(BaseTransform):
         p: float = 0.5,
         scale: Tuple[float, float] = (0.02, 0.33),
         ratio: Tuple[float, float] = (0.3, 3.3),
-        value: Union[str, float, Tuple[float, float, float]] = 'random',
+        value: Union[str, float, Tuple[float, float, float]] = 128,
         inplace: bool = False,
         min_visible_ratio: float = 0.5,
         min_box_size: int = 20,

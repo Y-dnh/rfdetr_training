@@ -152,8 +152,9 @@ class AugmentationPipeline:
             
             self.erasing = RandomErasing(
                 p=cfg.erasing,
-                scale=(0.02, 0.33),
+                scale=(0.02, cfg.erasing_max_scale),
                 ratio=(0.3, 3.3),
+                value=cfg.erasing_value,
                 min_visible_ratio=cfg.erasing_min_visible,
                 min_box_size=cfg.erasing_min_box_size,
                 box_aware=True,  # Enable box-aware erasing

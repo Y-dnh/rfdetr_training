@@ -12,7 +12,7 @@ import torch
 from PIL import Image
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from rfdetr.training import (
     setup_seed,
@@ -29,7 +29,7 @@ from rfdetr.training.visualizations import (
 
 
 # Path to test dataset
-TEST_DATASET_DIR = Path(__file__).parent / 'test_dataset'
+TEST_DATASET_DIR = Path(__file__).parent.parent / 'test_dataset'
 
 
 # =============================================================================

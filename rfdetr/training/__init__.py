@@ -18,7 +18,12 @@ from rfdetr.training.utils.config import (
 )
 from rfdetr.training.dataset import RFDETRDataset, build_dataset, collate_fn
 from rfdetr.training.trainer import RFDETRTrainer
-from rfdetr.training.validator import RFDETRValidator
+
+# RFDETRValidator потребує rfdetr[plus] (platform models) — робимо імпорт опціональним
+try:
+    from rfdetr.training.validator import RFDETRValidator
+except ImportError:
+    RFDETRValidator = None
 
 __all__ = [
     # Seed management

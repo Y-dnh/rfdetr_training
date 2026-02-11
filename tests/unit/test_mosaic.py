@@ -13,7 +13,7 @@ import torch
 from PIL import Image
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from rfdetr.training.augmentations.mosaic import Mosaic, Mosaic9
 from rfdetr.training.utils.seed import setup_seed
@@ -286,8 +286,8 @@ class TestMosaicVisual:
     def test_mosaic_with_test_dataset(self, tmp_path):
         """Test mosaic with actual test dataset if available."""
         test_dataset_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'tests', 'test_dataset', 'train'
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'test_dataset', 'train'
         )
         
         if not os.path.exists(test_dataset_path):

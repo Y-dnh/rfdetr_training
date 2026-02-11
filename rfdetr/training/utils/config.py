@@ -8,7 +8,7 @@ This module provides dataclasses for configuring:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict, Any, Union
 import warnings
 
 
@@ -93,8 +93,10 @@ class AugmentationConfig:
     
     # Random erasing (box-aware)
     erasing: float = 0.0
+    erasing_max_scale: float = 0.33    # Max fraction of image area to erase (0-1)
     erasing_min_visible: float = 0.5   # Min ratio of box that must remain visible (0-1)
     erasing_min_box_size: int = 20     # Min box dimension after erasing (pixels)
+    erasing_value: Union[str, float] = 128  # Fill value: 'random'=noise, 0=black, 128=gray, 255=white
     
     # Image size
     imgsz: int = 640
