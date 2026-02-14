@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 
 try:
-    from rfdetr_plus.models.downloads import _PLATFORM_MODELS as PLATFORM_MODELS
-except ModuleNotFoundError as ex:
-    if ex.name in ("rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"):
+    from rfdetr_plus.models.downloads import PLATFORM_MODELS
+except (ModuleNotFoundError, ImportError) as ex:
+    if isinstance(ex, ImportError) or ex.name in ("rfdetr_plus", "rfdetr_plus.models", "rfdetr_plus.models.downloads"):
         import warnings
 
         from rfdetr.platform import _INSTALL_MSG
