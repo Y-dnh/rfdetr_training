@@ -18,15 +18,17 @@ from rfdetr.training import RFDETRValidator
 # =============================================================================
 # БАЗОВА КОНФІГУРАЦІЯ
 # =============================================================================
-PROJECT_NAME = "rfdetr_validation"
+PROJECT_NAME = "rfdetr_validation_old_ver"
 
 # Шляхи
 BASE_DIR = Path(__file__).parent
-DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
+# DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
+# DATASET_DIR = "D:/dataset_for_training"
+DATASET_DIR = "E:/DPSU/old_images/datasets_for_training/train_dpsu_data_rfdetr"
 
 # Модель
-MODEL_PATH = "runs/rfdetr_training/rfdetr_2xl_for_autolabeling/weights/last.pt"  # Шлях до .pt файлу навченої моделі
-MODEL_SIZE = "2xl"                # ['n','s','m','b','l','xl','2xl'] | Має відповідати checkpoint'у
+MODEL_PATH = "D:/rfdetr_dpsu_v8.pth"  # Шлях до .pt файлу навченої моделі
+MODEL_SIZE = "m"                # ['n','s','m','b','l','xl','2xl'] | Має відповідати checkpoint'у
 
 
 # =============================================================================
@@ -55,7 +57,7 @@ INFERENCE_CONFIG = {
     # Обробка
     # -------------------------------------------------------------------------
     "batch_size": 2,                 # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 1–16
-    "workers": 4,                    # [≥0] DataLoader workers | 0=основний потік (Windows) | Рекомендовано: 2–8
+    "workers": 2,                    # [≥0] DataLoader workers | 0=основний потік (Windows) | Рекомендовано: 2–8
     "device": "cuda",                # ['cuda','cpu','cuda:0','cuda:1'] | Рекомендовано: 'cuda'
     
     # -------------------------------------------------------------------------
