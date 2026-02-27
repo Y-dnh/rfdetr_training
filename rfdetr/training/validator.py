@@ -572,6 +572,10 @@ class RFDETRValidator:
         # 2. Main Metrics (COCO)
         print(f"mAP@0.5:     {metrics['mAP50']:.4f}")
         print(f"mAP@0.5:0.95:{metrics['mAP50-95']:.4f}")
+        print(f"mAP@0.75:    {metrics.get('mAP75', 0):.4f}")
+        print(f"AP small:    {metrics.get('AP_small', 0):.4f}")
+        print(f"AP medium:   {metrics.get('AP_medium', 0):.4f}")
+        print(f"AP large:    {metrics.get('AP_large', 0):.4f}")
         print(f"Precision:   {metrics['precision']:.4f}")
         print(f"Recall:      {metrics['recall']:.4f}")
         print(f"F1 Score:    {metrics['f1']:.4f}")
@@ -609,7 +613,15 @@ class RFDETRValidator:
         """
         if dataset is None or not hasattr(dataset, 'coco'):
             print("Warning: Dataset does not support COCO eval. Using simplified metrics.")
-            return self._calculate_simple_metrics(predictions, targets)
+            simple = self._calculate_simple_metrics(predictions, targets)
+            return {
+                **simple,
+                'mAP50': 0.0, 'mAP50-95': 0.0, 'mAP75': 0.0,
+                'AP_small': 0.0, 'AP_medium': 0.0, 'AP_large': 0.0,
+                'AR_maxDets1': 0.0, 'AR_maxDets10': 0.0, 'AR_maxDets100': 0.0,
+                'AR_small': 0.0, 'AR_medium': 0.0, 'AR_large': 0.0,
+                'ap_by_class_area': [],
+            }
             
         # Prepare predictions for COCO eval
         coco_results = []
@@ -694,7 +706,15 @@ class RFDETRValidator:
         # Run COCO Eval
         if not coco_results:
             print("No predictions generated.")
-            return {'mAP50': 0.0, 'mAP50-95': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+            simple = self._calculate_simple_metrics(predictions, targets)
+            return {
+                'mAP50': 0.0, 'mAP50-95': 0.0, 'mAP75': 0.0,
+                'AP_small': 0.0, 'AP_medium': 0.0, 'AP_large': 0.0,
+                'AR_maxDets1': 0.0, 'AR_maxDets10': 0.0, 'AR_maxDets100': 0.0,
+                'AR_small': 0.0, 'AR_medium': 0.0, 'AR_large': 0.0,
+                'ap_by_class_area': [],
+                'precision': simple['precision'], 'recall': simple['recall'], 'f1': simple['f1'],
+            }
             
         coco_dt = dataset.coco.loadRes(coco_results)
         coco_eval = COCOeval(dataset.coco, coco_dt, 'bbox')
@@ -707,26 +727,95 @@ class RFDETRValidator:
             coco_eval.summarize()
         
         # Extract metrics
+        # COCO stats: [0]=mAP50-95, [1]=mAP50, [2]=mAP75, [3]=AP small, [4]=AP medium, [5]=AP large,
+        #             [6]=AR maxDets=1, [7]=AR maxDets=10, [8]=AR maxDets=100,
+        #             [9]=AR small, [10]=AR medium, [11]=AR large
         map50_95 = coco_eval.stats[0]
         map50 = coco_eval.stats[1]
-        
-        # We can also get simplified P/R from our own counter (which is robust to scaling issues if we matched in 576 space)
-        # But COCO eval is authoritative. 
-        # Note: COCOeval doesn't output single P/R values easily (it has arrays).
-        # Let's use our manual calculation for P/R/F1 to be consistent with what we see in visualization
-        # and use COCO for mAP.
-        
+        map75 = float(coco_eval.stats[2]) if len(coco_eval.stats) > 2 else 0.0
+        ap_small = float(coco_eval.stats[3]) if len(coco_eval.stats) > 3 else 0.0
+        ap_medium = float(coco_eval.stats[4]) if len(coco_eval.stats) > 4 else 0.0
+        ap_large = float(coco_eval.stats[5]) if len(coco_eval.stats) > 5 else 0.0
+        ar_maxdet1 = float(coco_eval.stats[6]) if len(coco_eval.stats) > 6 else 0.0
+        ar_maxdet10 = float(coco_eval.stats[7]) if len(coco_eval.stats) > 7 else 0.0
+        ar_maxdet100 = float(coco_eval.stats[8]) if len(coco_eval.stats) > 8 else 0.0
+        ar_small = float(coco_eval.stats[9]) if len(coco_eval.stats) > 9 else 0.0
+        ar_medium = float(coco_eval.stats[10]) if len(coco_eval.stats) > 10 else 0.0
+        ar_large = float(coco_eval.stats[11]) if len(coco_eval.stats) > 11 else 0.0
+
+        # Per-class AP by area (small, medium, large) from precision array [T, R, K, A, M]
+        ap_by_class_area = self._extract_per_class_ap_by_area(coco_eval, dataset)
+
         simple_metrics = self._calculate_simple_metrics(predictions, targets)
-        
+
         metrics = {
             'mAP50': map50,
             'mAP50-95': map50_95,
+            'mAP75': map75,
+            'AP_small': ap_small,
+            'AP_medium': ap_medium,
+            'AP_large': ap_large,
+            'AR_maxDets1': ar_maxdet1,
+            'AR_maxDets10': ar_maxdet10,
+            'AR_maxDets100': ar_maxdet100,
+            'AR_small': ar_small,
+            'AR_medium': ar_medium,
+            'AR_large': ar_large,
+            'ap_by_class_area': ap_by_class_area,
             'precision': simple_metrics['precision'],
             'recall': simple_metrics['recall'],
             'f1': simple_metrics['f1'],
         }
-        
+
         return metrics
+
+    def _extract_per_class_ap_by_area(
+        self, coco_eval: COCOeval, dataset: Optional[RFDETRDataset] = None
+    ) -> List[Dict[str, Any]]:
+        """Extract per-class AP for small, medium, large areas from COCO eval."""
+        out = []
+        if not hasattr(coco_eval, 'eval') or coco_eval.eval is None:
+            return out
+        prec = coco_eval.eval.get('precision')
+        if prec is None or not hasattr(dataset, 'label_to_cat_id'):
+            return out
+        # prec shape: [T, R, K, A, M]; A: 0=all, 1=small, 2=medium, 3=large
+        p = coco_eval.params
+        cat_ids = list(p.catIds) if p.useCats else []
+        if not cat_ids:
+            return out
+        mind = [i for i, m in enumerate(p.maxDets) if m == p.maxDets[-1]]
+        mind = mind[0] if mind else 0
+        cat_id_to_label = {v: k for k, v in dataset.label_to_cat_id.items()}
+        class_names = self.class_names or []
+
+        for k in range(len(cat_ids)):
+            cat_id = cat_ids[k]
+            class_id = cat_id_to_label.get(cat_id, k)
+            class_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
+            ap_s = 0.0
+            ap_m = 0.0
+            ap_l = 0.0
+            for aind, area_key in [(1, 'small'), (2, 'medium'), (3, 'large')]:
+                if aind >= prec.shape[3]:
+                    continue
+                s = prec[:, :, k, aind, mind]
+                valid = s[s > -1]
+                val = float(np.mean(valid)) if len(valid) > 0 else 0.0
+                if area_key == 'small':
+                    ap_s = val
+                elif area_key == 'medium':
+                    ap_m = val
+                else:
+                    ap_l = val
+            out.append({
+                'class_id': class_id,
+                'class_name': class_name,
+                'AP_small': ap_s,
+                'AP_medium': ap_m,
+                'AP_large': ap_l,
+            })
+        return out
 
     def _calculate_simple_metrics(self, predictions, targets):
         """Legacy simplified metric calculation (P/R/F1 only)."""
@@ -846,9 +935,33 @@ class RFDETRValidator:
 |------------|-----------|
 | **mAP@0.5** | {metrics.get('mAP50', 0):.4f} |
 | **mAP@0.5:0.95** | {metrics.get('mAP50-95', 0):.4f} |
+| **mAP@0.75** | {metrics.get('mAP75', 0):.4f} |
 | **Precision** | {overall_precision:.4f} |
 | **Recall** | {overall_recall:.4f} |
 | **F1 Score** | {overall_f1:.4f} |
+
+---
+
+## AP by Object Size (загалом)
+
+| **Розмір об'єкта** | **AP** | **Опис (COCO)** |
+|-------------------|--------|------------------|
+| **Small** | {metrics.get('AP_small', 0):.4f} | area < 32² px |
+| **Medium** | {metrics.get('AP_medium', 0):.4f} | 32² < area < 96² px |
+| **Large** | {metrics.get('AP_large', 0):.4f} | area > 96² px |
+
+---
+
+## Додаткові метрики (COCO)
+
+| **Metric** | **Value** | **Опис** |
+|------------|-----------|----------|
+| **AR @ maxDets=1** | {metrics.get('AR_maxDets1', 0):.4f} | Average Recall, 1 детекція на зображення |
+| **AR @ maxDets=10** | {metrics.get('AR_maxDets10', 0):.4f} | Average Recall, до 10 детекцій |
+| **AR @ maxDets=100** | {metrics.get('AR_maxDets100', 0):.4f} | Average Recall, до 100 детекцій |
+| **AR small** | {metrics.get('AR_small', 0):.4f} | Average Recall для малих об'єктів |
+| **AR medium** | {metrics.get('AR_medium', 0):.4f} | Average Recall для середніх об'єктів |
+| **AR large** | {metrics.get('AR_large', 0):.4f} | Average Recall для великих об'єктів |
 
 ---
 
@@ -905,6 +1018,20 @@ class RFDETRValidator:
                     'fn': fn,
                 })
         
+        # Per-class AP by object size (small, medium, large)
+        ap_by_class_area = metrics.get('ap_by_class_area') or []
+        if ap_by_class_area:
+            report_content += """
+---
+
+## AP по класах за розміром об'єкта (Small / Medium / Large)
+
+| **Клас** | **AP Small** | **AP Medium** | **AP Large** |
+|----------|--------------|---------------|--------------|
+"""
+            for row in ap_by_class_area:
+                report_content += f"| {row.get('class_name', '')} | {row.get('AP_small', 0):.3f} | {row.get('AP_medium', 0):.3f} | {row.get('AP_large', 0):.3f} |\n"
+        
         # Category distribution
         if class_metrics:
             report_content += """
@@ -921,10 +1048,38 @@ class RFDETRValidator:
                     percentage = (m['gt'] / total_gt) * 100 if total_gt > 0 else 0
                     report_content += f"| {m['name']} | {m['gt']} | {percentage:.1f}% |\n"
         
-        # Inference speed section (always add if we have data)
-        report_content += f"""
+        # Graphs section (curves and confusion matrix)
+        report_content += """
 ---
 
+## Графіки та візуалізації
+
+Нижче наведено криві продуктивності та матрицю плутанини (файли збережено в цій же директорії).
+
+### Матриця плутанини
+
+![Confusion Matrix](confusion_matrix.png)
+
+### Крива Precision-Recall (PR)
+
+![Box PR Curve](BoxPR_curve.png)
+
+### Крива F1 від порогу впевненості
+
+![Box F1 Curve](BoxF1_curve.png)
+
+### Крива Precision від порогу впевненості
+
+![Box P Curve](BoxP_curve.png)
+
+### Крива Recall від порогу впевненості
+
+![Box R Curve](BoxR_curve.png)
+
+---
+"""
+        # Inference speed section (always add if we have data)
+        report_content += f"""
 ## Inference Speed
 
 | **Metric** | **Value** |

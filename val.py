@@ -24,7 +24,7 @@ PROJECT_NAME = "rfdetr_validation_old_ver"
 BASE_DIR = Path(__file__).parent
 # DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
 # DATASET_DIR = "D:/dataset_for_training"
-DATASET_DIR = "E:/DPSU/old_images/datasets_for_training/train_dpsu_data_rfdetr"
+DATASET_DIR = "D:/dataset_for_training"
 
 # Модель
 MODEL_PATH = "D:/rfdetr_dpsu_v8.pth"  # Шлях до .pt файлу навченої моделі
