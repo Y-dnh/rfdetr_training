@@ -14,6 +14,8 @@ Usage:
 import multiprocessing
 from pathlib import Path
 
+from numpy import True_
+
 from rfdetr.training import (
     setup_seed,
     AugmentationConfig,
@@ -28,7 +30,7 @@ from rfdetr.training import (
 # БАЗОВА КОНФІГУРАЦІЯ
 # =============================================================================
 SEED = 42
-PROJECT_NAME = "rfdetr_training"
+PROJECT_NAME = "rfdetr_large"
 
 # Шляхи
 BASE_DIR = Path(__file__).parent
@@ -43,7 +45,7 @@ PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для заван�
 # КОНФІГУРАЦІЯ МОДЕЛІ
 # =============================================================================
 MODEL_CONFIG = ModelConfig(
-    model_size="2xl",                 # 'n','s','m','b','l','xl','2xl' | Рекомендовано: 'b' або 'l'
+    model_size="l",                 # 'n','s','m','b','l','xl','2xl' | Рекомендовано: 'b' або 'l'
     # num_classes — автоматично визначається з COCO JSON анотацій датасету.
     # Вказане значення ігнорується при тренуванні.
     pretrained_weights=PRETRAINED_WEIGHTS,  # Шлях .pt або None (авто-завантаження з HuggingFace)
@@ -63,14 +65,14 @@ TRAINING_CONFIG = TrainingConfig(
     # Налаштування проекту
     # -------------------------------------------------------------------------
     project=f"runs/{PROJECT_NAME}",  # Базова папка для run'ів
-    name="rfdetr_2xl_for_autolabeling",  # Назва run: створює exp, exp2, exp3, ...
+    name="rfdetr_l",  # Назва run: створює exp, exp2, exp3, ...
     exist_ok=False,                  # [True/False] True=перезаписати існуючий run
     
     # -------------------------------------------------------------------------
     # Основні параметри навчання
     # -------------------------------------------------------------------------
-    epochs=50,                       # [≥1] Кількість епох | Рекомендовано: 50–300 (fine-tune: 20–100)
-    batch_size=4,                    # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 4–32
+    epochs=100,                       # [≥1] Кількість епох | Рекомендовано: 50–300 (fine-tune: 20–100)
+    batch_size=8,                    # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 4–32
     
     # -------------------------------------------------------------------------
     # Оптимізатор (AdamW)
@@ -151,7 +153,7 @@ AUGMENTATION_CONFIG = AugmentationConfig(
     flipud=0.0,                      # [0.0–1.0] Вертикальний flip | Рекомендовано: 0.0 (0.5 для аеро/супутник)
 
     # --- Random Erasing (box-aware видалення регіонів) ---
-    erasing=0.25,                    # [0.0–1.0] Ймовірність erasing | 0=вимкнено | Рекомендовано: 0.0–0.4
+    erasing=0.0,                    # [0.0–1.0] Ймовірність erasing | 0=вимкнено | Рекомендовано: 0.0–0.4
     erasing_value=128,               # [0/128/255/'random'] 0=чорний, 128=сірий, 'random'=шум
 
     # =========================================================================
@@ -213,12 +215,12 @@ EXPORT_CONFIG = ExportConfig(
     # -------------------------------------------------------------------------
     dynamic_batch=False,              # [True/False] Різний batch при інференсі | False=фіксований
     batch_size=1,                     # [≥1] Batch size при інференсі (ігнорується якщо dynamic_batch=True)
-    half=False,                       # [True/False] FP16 (швидше, менше пам'яті) | False=FP32 (точніше)
+    half=True,                       # [True/False] FP16 (швидше, менше пам'яті) | False=FP32 (точніше)
     
     # -------------------------------------------------------------------------
     # Інше
     # -------------------------------------------------------------------------
-    verbose=False,                    # [True/False] Детальний ONNX export лог
+    verbose=True,                    # [True/False] Детальний ONNX export лог
 )
 
 

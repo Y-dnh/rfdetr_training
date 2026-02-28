@@ -545,6 +545,8 @@ class RFDETRValidator:
             'inference_fps': round(avg_fps, 2),
             'split': split,
             'dataset_dir': str(dataset_dir),
+            'save_dir': str(self.save_dir),
+            'classes': list(self.class_names) if self.class_names else [],
         }
         
         # Generate markdown report
@@ -620,7 +622,7 @@ class RFDETRValidator:
                 'AP_small': 0.0, 'AP_medium': 0.0, 'AP_large': 0.0,
                 'AR_maxDets1': 0.0, 'AR_maxDets10': 0.0, 'AR_maxDets100': 0.0,
                 'AR_small': 0.0, 'AR_medium': 0.0, 'AR_large': 0.0,
-                'ap_by_class_area': [],
+                'ap_by_class_area': [], 'per_class_ap': [],
             }
             
         # Prepare predictions for COCO eval
@@ -646,10 +648,24 @@ class RFDETRValidator:
                 
             if len(pred_boxes) == 0:
                 continue
-                
-            # Get original size for this image
-            orig_h, orig_w = target['orig_size'].tolist() if isinstance(target['orig_size'], torch.Tensor) else target['orig_size']
-            
+
+            # Get original size for this image (має відповідати розміру до letterbox)
+            if 'orig_size' not in target:
+                import warnings
+                warnings.warn(
+                    "target missing 'orig_size'; using inference size. COCO AP by area may be wrong.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                orig_h = orig_w = self.imgsz
+            else:
+                os_t = target['orig_size']
+                if isinstance(os_t, torch.Tensor):
+                    lst = os_t.tolist()
+                    orig_h, orig_w = (lst[0], lst[1]) if len(lst) >= 2 else (self.imgsz, self.imgsz)
+                else:
+                    orig_h, orig_w = (os_t[0], os_t[1]) if len(os_t) >= 2 else (self.imgsz, self.imgsz)
+
             # Current size used for inference (imgsz)
             cur_h, cur_w = self.imgsz, self.imgsz
             
@@ -712,7 +728,7 @@ class RFDETRValidator:
                 'AP_small': 0.0, 'AP_medium': 0.0, 'AP_large': 0.0,
                 'AR_maxDets1': 0.0, 'AR_maxDets10': 0.0, 'AR_maxDets100': 0.0,
                 'AR_small': 0.0, 'AR_medium': 0.0, 'AR_large': 0.0,
-                'ap_by_class_area': [],
+                'ap_by_class_area': [], 'per_class_ap': [],
                 'precision': simple['precision'], 'recall': simple['recall'], 'f1': simple['f1'],
             }
             
@@ -745,6 +761,8 @@ class RFDETRValidator:
 
         # Per-class AP by area (small, medium, large) from precision array [T, R, K, A, M]
         ap_by_class_area = self._extract_per_class_ap_by_area(coco_eval, dataset)
+        # Per-class mAP50 and mAP50-95 (для class_stats у JSON)
+        per_class_ap = self._extract_per_class_ap(coco_eval, dataset)
 
         simple_metrics = self._calculate_simple_metrics(predictions, targets)
 
@@ -762,6 +780,7 @@ class RFDETRValidator:
             'AR_medium': ar_medium,
             'AR_large': ar_large,
             'ap_by_class_area': ap_by_class_area,
+            'per_class_ap': per_class_ap,
             'precision': simple_metrics['precision'],
             'recall': simple_metrics['recall'],
             'f1': simple_metrics['f1'],
@@ -774,47 +793,100 @@ class RFDETRValidator:
     ) -> List[Dict[str, Any]]:
         """Extract per-class AP for small, medium, large areas from COCO eval."""
         out = []
-        if not hasattr(coco_eval, 'eval') or coco_eval.eval is None:
-            return out
-        prec = coco_eval.eval.get('precision')
-        if prec is None or not hasattr(dataset, 'label_to_cat_id'):
-            return out
-        # prec shape: [T, R, K, A, M]; A: 0=all, 1=small, 2=medium, 3=large
-        p = coco_eval.params
-        cat_ids = list(p.catIds) if p.useCats else []
-        if not cat_ids:
-            return out
-        mind = [i for i, m in enumerate(p.maxDets) if m == p.maxDets[-1]]
-        mind = mind[0] if mind else 0
-        cat_id_to_label = {v: k for k, v in dataset.label_to_cat_id.items()}
-        class_names = self.class_names or []
+        try:
+            if not hasattr(coco_eval, 'eval') or coco_eval.eval is None:
+                return out
+            prec = coco_eval.eval.get('precision')
+            if prec is None:
+                return out
+            if not hasattr(dataset, 'label_to_cat_id'):
+                print("[Validator] ap_by_class_area: dataset has no label_to_cat_id, skipping per-class AP by area.")
+                return out
+            if prec.ndim != 5:
+                print(f"[Validator] ap_by_class_area: unexpected precision shape {getattr(prec, 'shape', None)}, skipping.")
+                return out
+            # prec shape: [T, R, K, A, M]; A: 0=all, 1=small, 2=medium, 3=large
+            p = coco_eval.params
+            cat_ids = list(p.catIds) if p.useCats else []
+            if not cat_ids:
+                return out
+            mind = [i for i, m in enumerate(p.maxDets) if m == p.maxDets[-1]]
+            mind = mind[0] if mind else 0
+            cat_id_to_label = {v: k for k, v in dataset.label_to_cat_id.items()}
+            class_names = self.class_names or []
 
-        for k in range(len(cat_ids)):
-            cat_id = cat_ids[k]
-            class_id = cat_id_to_label.get(cat_id, k)
-            class_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
-            ap_s = 0.0
-            ap_m = 0.0
-            ap_l = 0.0
-            for aind, area_key in [(1, 'small'), (2, 'medium'), (3, 'large')]:
-                if aind >= prec.shape[3]:
-                    continue
-                s = prec[:, :, k, aind, mind]
-                valid = s[s > -1]
-                val = float(np.mean(valid)) if len(valid) > 0 else 0.0
-                if area_key == 'small':
-                    ap_s = val
-                elif area_key == 'medium':
-                    ap_m = val
+            for k in range(len(cat_ids)):
+                cat_id = cat_ids[k]
+                class_id = cat_id_to_label.get(cat_id, k)
+                if cat_id not in cat_id_to_label and k != class_id:
+                    # cat_id not in map: class_id was set to k (index), may be wrong for naming
+                    pass
+                class_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
+                ap_s = 0.0
+                ap_m = 0.0
+                ap_l = 0.0
+                for aind, area_key in [(1, 'small'), (2, 'medium'), (3, 'large')]:
+                    if aind >= prec.shape[3]:
+                        continue
+                    s = prec[:, :, k, aind, mind]
+                    valid = s[s > -1]
+                    val = float(np.mean(valid)) if len(valid) > 0 else 0.0
+                    if area_key == 'small':
+                        ap_s = val
+                    elif area_key == 'medium':
+                        ap_m = val
+                    else:
+                        ap_l = val
+                out.append({
+                    'class_id': int(class_id),
+                    'class_name': class_name,
+                    'AP_small': ap_s,
+                    'AP_medium': ap_m,
+                    'AP_large': ap_l,
+                })
+            if not out and len(cat_ids) > 0:
+                print("[Validator] ap_by_class_area: no rows extracted (check COCO eval precision layout).")
+        except Exception as e:
+            print(f"[Validator] ap_by_class_area failed: {e}")
+        return out
+
+    def _extract_per_class_ap(
+        self, coco_eval: COCOeval, dataset: Optional[RFDETRDataset] = None
+    ) -> List[Dict[str, Any]]:
+        """Extract per-class mAP50 and mAP50-95 from COCO eval (area=all)."""
+        out = []
+        try:
+            if not hasattr(coco_eval, 'eval') or coco_eval.eval is None:
+                return out
+            prec = coco_eval.eval.get('precision')
+            if prec is None or prec.ndim != 5 or not hasattr(dataset, 'label_to_cat_id'):
+                return out
+            p = coco_eval.params
+            cat_ids = list(p.catIds) if p.useCats else []
+            if not cat_ids:
+                return out
+            mind = [i for i, m in enumerate(p.maxDets) if m == p.maxDets[-1]]
+            mind = mind[0] if mind else 0
+            cat_id_to_label = {v: k for k, v in dataset.label_to_cat_id.items()}
+            a_all = 0
+            t_50_idx = None
+            if hasattr(p, 'iouThrs') and len(p.iouThrs) > 0:
+                t_50_idx = np.argmin(np.abs(np.array(p.iouThrs) - 0.5))
+            for k in range(len(cat_ids)):
+                s_all = prec[:, :, k, a_all, mind]
+                valid = s_all[s_all > -1]
+                mAP50_95 = float(np.mean(valid)) if len(valid) > 0 else 0.0
+                if t_50_idx is not None:
+                    s_50 = prec[t_50_idx, :, k, a_all, mind]
+                    valid_50 = s_50[s_50 > -1]
+                    mAP50 = float(np.mean(valid_50)) if len(valid_50) > 0 else mAP50_95
                 else:
-                    ap_l = val
-            out.append({
-                'class_id': class_id,
-                'class_name': class_name,
-                'AP_small': ap_s,
-                'AP_medium': ap_m,
-                'AP_large': ap_l,
-            })
+                    mAP50 = mAP50_95
+                cat_id = cat_ids[k]
+                class_id = cat_id_to_label.get(cat_id, k)
+                out.append({'class_id': int(class_id), 'mAP50': mAP50, 'mAP50-95': mAP50_95})
+        except Exception as e:
+            print(f"[Validator] per_class_ap failed: {e}")
         return out
 
     def _calculate_simple_metrics(self, predictions, targets):
@@ -944,6 +1016,8 @@ class RFDETRValidator:
 
 ## AP by Object Size (загалом)
 
+*Площі (area) рахуються в пікселях **оригінального** зображення: бокси перед передачею в COCO перетворені з розміру інференсу назад до `orig_size`.*
+
 | **Розмір об'єкта** | **AP** | **Опис (COCO)** |
 |-------------------|--------|------------------|
 | **Small** | {metrics.get('AP_small', 0):.4f} | area < 32² px |
@@ -1054,7 +1128,7 @@ class RFDETRValidator:
 
 ## Графіки та візуалізації
 
-Нижче наведено криві продуктивності та матрицю плутанини (файли збережено в цій же директорії).
+*Усі зображення збережено в тій самій папці, що й цей звіт. Для коректного відображення графіків відкривайте `validation_report.md` з цієї папки або переконайтесь, що поточна директорія — каталог звіту.*
 
 ### Матриця плутанини
 

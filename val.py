@@ -142,31 +142,147 @@ def main(
         save_visualizations=config.get("save_visualizations", True),
     )
     
-    # Збереження результатів
+    # Збереження результатів (додаємо model_path та imgsz для JSON)
     if save_results and results:
+        results["model_path"] = model_path
+        config["imgsz"] = imgsz
+        config["model_size"] = MODEL_SIZE
         save_validation_results(results, config)
-        
+
+    # Розширений вивід у консоль (те саме, що в звіті MD)
+    if results:
+        print_validation_summary(results)
+
     return results
 
 
+def print_validation_summary(results: dict) -> None:
+    """Виводить у консоль розширену звітність: AP по розмірах, AR, per-class AP by area, шляхи."""
+    metrics = results.get("metrics") or {}
+    save_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}"))
+    num_classes = results.get("num_classes", 0)
+
+    print("\n" + "=" * 60)
+    print("  РОЗШИРЕНИЙ ПІДСУМОК (те саме, що в validation_report.md)")
+    print("=" * 60)
+
+    # AP по розміру об'єкта
+    print("\n  AP по розміру об'єкта (загалом)")
+    print("  " + "-" * 40)
+    print(f"  {'Small (area < 32² px)':<28} {metrics.get('AP_small', 0):.4f}")
+    print(f"  {'Medium (32²–96² px)':<28} {metrics.get('AP_medium', 0):.4f}")
+    print(f"  {'Large (area > 96² px)':<28} {metrics.get('AP_large', 0):.4f}")
+
+    # AR
+    print("\n  Average Recall (AR)")
+    print("  " + "-" * 40)
+    print(f"  {'AR @ maxDets=1':<28} {metrics.get('AR_maxDets1', 0):.4f}")
+    print(f"  {'AR @ maxDets=10':<28} {metrics.get('AR_maxDets10', 0):.4f}")
+    print(f"  {'AR @ maxDets=100':<28} {metrics.get('AR_maxDets100', 0):.4f}")
+    print(f"  {'AR small':<28} {metrics.get('AR_small', 0):.4f}")
+    print(f"  {'AR medium':<28} {metrics.get('AR_medium', 0):.4f}")
+    print(f"  {'AR large':<28} {metrics.get('AR_large', 0):.4f}")
+
+    # Per-class AP by area
+    ap_by_class = metrics.get("ap_by_class_area") or []
+    if ap_by_class:
+        print("\n  AP по класах за розміром (Small / Medium / Large)")
+        print("  " + "-" * 56)
+        print(f"  {'Клас':<20} {'AP small':>10} {'AP medium':>10} {'AP large':>10}")
+        print("  " + "-" * 56)
+        for row in ap_by_class:
+            name = (row.get("class_name") or f"class_{row.get('class_id', 0)}")[:18]
+            print(f"  {name:<20} {row.get('AP_small', 0):>10.3f} {row.get('AP_medium', 0):>10.3f} {row.get('AP_large', 0):>10.3f}")
+
+    # Шляхи до файлів
+    print("\n  Збережені файли")
+    print("  " + "-" * 56)
+    print(f"  JSON:   {save_dir / 'validation_results.json'}")
+    print(f"  Звіт:   {save_dir / 'validation_report.md'}")
+    print(f"  CM:     {save_dir / 'confusion_matrix.png'}")
+    print(f"  Криві:  {save_dir / 'BoxPR_curve.png'}, BoxF1_curve.png, BoxP_curve.png, BoxR_curve.png")
+    print("=" * 60 + "\n")
+
+
 def save_validation_results(results: dict, config: dict = None):
-    """Збереження результатів у JSON."""
+    """Збереження результатів у JSON у форматі як в іншому проєкті (YOLO-style)."""
     output_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    results["validation_date"] = datetime.now().isoformat()
-    results["inference_config"] = config or INFERENCE_CONFIG
-    
+    metrics = results.get("metrics") or {}
+    config = config or INFERENCE_CONFIG
+
+    # class_stats: {"0": {mAP50, mAP50-95, precision, recall, f1}, ...}
+    raw_class_stats = metrics.get("class_stats") or {}
+    per_class_ap = {x["class_id"]: x for x in (metrics.get("per_class_ap") or [])}
+    class_stats_out = {}
+    for cid, st in raw_class_stats.items():
+        key = str(cid)
+        gt, tp, fp, fn = st.get("gt", 0), st.get("tp", 0), st.get("fp", 0), st.get("fn", 0)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        ap = per_class_ap.get(int(cid) if isinstance(cid, str) and cid.isdigit() else cid, {})
+        class_stats_out[key] = {
+            "mAP50": ap.get("mAP50", 0.0),
+            "mAP50-95": ap.get("mAP50-95", 0.0),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
+
+    # ap_by_class_area: [{small, medium, large}, ...] (без class_id/class_name)
+    ap_by_area = metrics.get("ap_by_class_area") or []
+    ap_by_class_area_out = []
+    for row in ap_by_area:
+        ap_by_class_area_out.append({
+            "small": row.get("AP_small", row.get("small", 0.0)),
+            "medium": row.get("AP_medium", row.get("medium", 0.0)),
+            "large": row.get("AP_large", row.get("large", 0.0)),
+        })
+
+    inference_fps = results.get("inference_fps") or 0.0
+    inference_latency_ms = (1000.0 / inference_fps) if inference_fps > 0 else 0.0
+
+    payload = {
+        "metrics": {
+            "mAP50": metrics.get("mAP50", 0.0),
+            "mAP50-95": metrics.get("mAP50-95", 0.0),
+            "mAP75": metrics.get("mAP75", 0.0),
+            "precision": metrics.get("precision", 0.0),
+            "recall": metrics.get("recall", 0.0),
+            "f1": metrics.get("f1", 0.0),
+            "ap_small": metrics.get("AP_small", 0.0),
+            "ap_medium": metrics.get("AP_medium", 0.0),
+            "ap_large": metrics.get("AP_large", 0.0),
+            "ar_maxdets1": metrics.get("AR_maxDets1", 0.0),
+            "ar_maxdets10": metrics.get("AR_maxDets10", 0.0),
+            "ar_maxdets100": metrics.get("AR_maxDets100", 0.0),
+            "ar_small": metrics.get("AR_small", 0.0),
+            "ar_medium": metrics.get("AR_medium", 0.0),
+            "ar_large": metrics.get("AR_large", 0.0),
+            "class_stats": class_stats_out,
+            "ap_by_class_area": ap_by_class_area_out,
+        },
+        "num_classes": results.get("num_classes", 0),
+        "classes": results.get("classes", []),
+        "inference_fps": inference_fps,
+        "inference_latency_ms": inference_latency_ms,
+        "split": results.get("split", "valid"),
+        "dataset_dir": results.get("dataset_dir", ""),
+        "validation_date": datetime.now().isoformat(),
+        "inference_config": config,
+        "model_path": results.get("model_path") or "",
+    }
     results_path = output_dir / "validation_results.json"
-    
+
     def convert(obj):
         if isinstance(obj, Path):
             return str(obj)
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
-    
+
     with open(results_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False, default=convert)
-    
+        json.dump(payload, f, indent=2, ensure_ascii=False, default=convert)
+
     print(f"\n[Results] Результати збережено: {results_path}")
 
 
