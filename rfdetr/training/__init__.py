@@ -18,6 +18,7 @@ from rfdetr.training.utils.config import (
 )
 from rfdetr.training.dataset import RFDETRDataset, build_dataset, collate_fn
 from rfdetr.training.trainer import RFDETRTrainer
+from rfdetr.training.albumentation_config import get_default_albu_config
 
 # RFDETRValidator потребує rfdetr[plus] (platform models) — робимо імпорт опціональним
 try:
@@ -40,6 +41,7 @@ __all__ = [
     "RFDETRDataset",
     "build_dataset",
     "collate_fn",
+    "get_default_albu_config",
     # Trainer/Validator
     "RFDETRTrainer",
     "RFDETRValidator",

@@ -14,8 +14,6 @@ Usage:
 import multiprocessing
 from pathlib import Path
 
-from numpy import True_
-
 from rfdetr.training import (
     setup_seed,
     AugmentationConfig,
@@ -24,17 +22,16 @@ from rfdetr.training import (
     ExportConfig,
     RFDETRTrainer,
 )
-
-
 # =============================================================================
 # БАЗОВА КОНФІГУРАЦІЯ
 # =============================================================================
 SEED = 42
 PROJECT_NAME = "rfdetr_large"
+# Папка проєкту: runs/PROJECT_NAME. train.py зберігає в PROJECT_DIR/training/<name>, val.py — в PROJECT_DIR/validation
+PROJECT_DIR = f"runs/{PROJECT_NAME}"
 
 # Шляхи
 BASE_DIR = Path(__file__).parent
-# DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
 DATASET_DIR = Path("D:/dataset_for_training")
 
 # Модель
@@ -54,18 +51,18 @@ MODEL_CONFIG = ModelConfig(
     accept_platform_license=True,   # Обов'язково True для xl/2xl (Platform Model License 1.0)
 )
 
-# ПРИМІТКА: Розмір зображення (imgsz) автоматично береться з моделі:
-# Nano=384, Small=512, Medium=576, Base=560, Large=704, XLarge=700, 2XLarge=880
+# Розмір зображення по моделі (для albu config і логів)
+MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # =============================================================================
 # КОНФІГУРАЦІЯ ТРЕНУВАННЯ
 # =============================================================================
 TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
-    # Налаштування проекту
+    # Налаштування проекту (результати в PROJECT_DIR/training/<name>/)
     # -------------------------------------------------------------------------
-    project=f"runs/{PROJECT_NAME}",  # Базова папка для run'ів
-    name="rfdetr_l",  # Назва run: створює exp, exp2, exp3, ...
+    project=PROJECT_DIR,             # runs/yolov8s → training зберігається в runs/yolov8s/training/
+    name="baseline",                 # Назва запуску: runs/.../training/baseline/
     exist_ok=False,                  # [True/False] True=перезаписати існуючий run
     
     # -------------------------------------------------------------------------
@@ -113,84 +110,41 @@ TRAINING_CONFIG = TrainingConfig(
 
 
 # =============================================================================
-# КОНФІГУРАЦІЯ АУГМЕНТАЦІЙ
+# ALBUMENTATION_CONFIG — тепловізія (white hot), малі об'єкти, PTZ 1280x720/1024
+# Камера на башті ~30м, фіксована, горизонт рівний; детекція людей і машин.
+# 50% tiny / 30% small — м'який dropout (менші діри), помірна геометрія.
 # =============================================================================
-# Конфіг розділений на 2 частини:
-#   1. ОСНОВНІ — ймовірності та сила аугментацій (що включити і як часто)
-#   2. ТОНКІ НАЛАШТУВАННЯ — діапазони, пороги, ліміти (зазвичай змінювати не потрібно)
+import albumentations as A
+ALBUMENTATION_CONFIG = [
+    A.Blur(blur_limit=5, p=0.2),
+    A.GaussNoise(var_limit=(10.0, 40.0), p=0.35),
+    A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.6),
+    A.RandomBrightnessContrast(brightness_limit=0.4, contrast_limit=0.4, p=0.65),
+    A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=5, val_shift_limit=35, p=0.4),
+    A.HorizontalFlip(p=0.5),
+    A.VerticalFlip(p=0.2),
+    A.CoarseDropout(num_holes=6, max_h_size=20, max_w_size=20, fill_value=128, p=0.35),
+    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.2, rotate_limit=5, p=0.4),
+]
+
+# =============================================================================
+# КОНФІГУРАЦІЯ АУГМЕНТАЦІЙ (пайплайн + imgsz + albu список)
 # =============================================================================
 AUGMENTATION_CONFIG = AugmentationConfig(
-
-    # =========================================================================
-    # ОСНОВНІ ПАРАМЕТРИ
-    # =========================================================================
-
-    # --- Композитні (об'єднання кількох зображень) ---
-    mosaic=0.0,                      # [0.0–1.0] Mosaic: 4 зображення в одне | 0=вимкнено | Рекомендовано: 0.5–1.0
-    close_mosaic=5,                  # [0–epochs] Вимкнути Mosaic в останніх N епохах | 0=завжди вимкнено
-    mixup=0.0,                       # [0.0–1.0] MixUp: альфа-блендинг 2 зображень | 0=вимкнено | Рекомендовано: 0.0–0.15
-    cutmix=0.0,                      # [0.0–1.0] CutMix: вирізання регіону | 0=вимкнено | Рекомендовано: 0.0–0.3
-
-    # --- Колірні ---
-    hsv_h=0.0,                       # [0.0–1.0] Gain Hue: зсув ±h*180° | 0=вимкнено | Рекомендовано: 0.0–0.03
-    hsv_s=0.0,                       # [0.0–1.0] Gain Saturation: ×(1±s) | 0=вимкнено | Рекомендовано: 0.0–0.9
-    hsv_v=0.4,                       # [0.0–1.0] Gain Value: ×(1±v) | 0=вимкнено | Рекомендовано: 0.0–0.5
-    brightness=0.2,                  # [0.0–1.0] Ймовірність зміни яскравості | 0=вимкнено | Рекомендовано: 0.0–0.3
-    contrast=0.2,                    # [0.0–1.0] Ймовірність зміни контрасту | 0=вимкнено | Рекомендовано: 0.0–0.3
-    blur=0.1,                        # [0.0–1.0] Ймовірність Gaussian blur | 0=вимкнено | Рекомендовано: 0.0–0.2
-    noise=0.0,                       # [0.0–1.0] Ймовірність шуму | 0=вимкнено | Рекомендовано: 0.0–0.2
-    noise_type='gaussian_mono',      # ['gaussian_mono'(IR), 'gaussian_rgb'(RGB), 'salt_pepper']
-
-    # --- Геометричні ---
-    degrees=10.0,                    # [0–180] Поворот ±degrees | 0=вимкнено | Рекомендовано: 0–15
-    translate=0.1,                   # [0.0–1.0] Зсув (частка від imgsz) | 0=вимкнено | Рекомендовано: 0.0–0.2
-    scale=0.0,                       # [0.0–0.9] Масштаб: ×(1±scale) | 0=вимкнено | Рекомендовано: 0.0–0.5
-    shear=0.0,                       # [0–90] Зсув перспективи (градуси) | 0=вимкнено | Рекомендовано: 0–5
-    perspective=0.0,                 # [0.0–0.001] Перспективна деформація | 0=вимкнено | Рекомендовано: 0.0–0.0005
-
-    # --- Відзеркалення ---
-    fliplr=0.5,                      # [0.0–1.0] Горизонтальний flip | Рекомендовано: 0.5
-    flipud=0.0,                      # [0.0–1.0] Вертикальний flip | Рекомендовано: 0.0 (0.5 для аеро/супутник)
-
-    # --- Random Erasing (box-aware видалення регіонів) ---
-    erasing=0.0,                    # [0.0–1.0] Ймовірність erasing | 0=вимкнено | Рекомендовано: 0.0–0.4
-    erasing_value=128,               # [0/128/255/'random'] 0=чорний, 128=сірий, 'random'=шум
-
-    # =========================================================================
-    # ТОНКІ НАЛАШТУВАННЯ (зазвичай змінювати не потрібно)
-    # =========================================================================
-
-    # Mosaic
-    mosaic_scale=(0.5, 1.5),         # (>0, ≤2.0) Центр мозаїки = imgsz × [min, max] | Рекомендовано: (0.5, 1.5)
-    mosaic_min_box_size=2,           # [≥1 пікс] Боксы менше — відкидаються | Рекомендовано: 2–4
-
-    # MixUp
-    mixup_alpha=32.0,                # [>0] Beta(α,α): 1.0=рівномірний, 32+=слабкий мікс | Рекомендовано: 8–32
-
-    # CutMix
-    cutmix_alpha=1.0,                # [>0] Beta(α,α): 1.0=рівномірний розмір | Рекомендовано: 0.5–2.0
-    cutmix_min_visible=0.3,          # [0.0–1.0] Мін. видима частина боксу | Рекомендовано: 0.2–0.5
-    cutmix_min_box_size=10,          # [≥1 пікс] Мін. розмір боксу | Рекомендовано: 5–20
-    cutmix_overlap_thresh=0.1,       # [0.0–1.0] Нижче — бокс не змінюється | Рекомендовано: 0.05–0.2
-
-    # Яскравість / Контраст / Blur
-    brightness_range=(0.5, 1.5),     # (>0, >0) Множник: <1=темніше, >1=яскравіше | Рекомендовано: (0.5, 1.5)
-    contrast_range=(0.5, 1.5),       # (>0, >0) Множник: <1=менше, >1=більше | Рекомендовано: (0.5, 1.5)
-    blur_kernel_range=(3, 7),        # (≥3, ≤15) Непарні числа | Більше=сильніший blur | Рекомендовано: (3, 7)
-
-    # Шум
-    noise_strength=(5.0, 30.0),      # (>0, >0) Gaussian std dev | Більше=сильніший | Рекомендовано: (5, 30)
-    salt_pepper_amount=0.02,         # [0.0–1.0] Частка пікселів | Рекомендовано: 0.01–0.05
-
-    # Random Erasing
-    erasing_min_scale=0.02,          # [0.0–1.0] < max_scale | Мін. частка площі | Рекомендовано: 0.02
-    erasing_max_scale=0.33,          # [0.0–1.0] > min_scale | Макс. частка площі | Рекомендовано: 0.2–0.4
-    erasing_ratio=(0.3, 3.3),        # (>0, >0) Aspect ratio вирізу | Рекомендовано: (0.3, 3.3)
-    erasing_min_visible=0.5,         # [0.0–1.0] Мін. видима частина боксу | Рекомендовано: 0.3–0.7
-    erasing_min_box_size=20,         # [≥1 пікс] Мін. розмір боксу | Рекомендовано: 10–30
-
-    # LetterBox / Padding
-    letterbox_color=(114, 114, 114), # (0-255, 0-255, 0-255) RGB | (114,114,114)=сірий, (0,0,0)=чорний для IR
+    imgsz=MODEL_RESOLUTIONS.get(MODEL_CONFIG.model_size, 560),
+    mosaic=0.0,
+    close_mosaic=5,
+    mixup=0.0,
+    cutmix=0.0,
+    mosaic_scale=(0.5, 1.5),
+    mosaic_min_box_size=2,
+    mixup_alpha=32.0,
+    cutmix_alpha=1.0,
+    cutmix_min_visible=0.3,
+    cutmix_min_box_size=10,
+    cutmix_overlap_thresh=0.1,
+    letterbox_color=(114, 114, 114),
+    albumentation_transforms=ALBUMENTATION_CONFIG,
 )
 
 
@@ -233,9 +187,8 @@ def main():
     # Налаштування seed для відтворюваності
     setup_seed(SEED)
     
-    # Визначаємо resolution по розміру моделі
-    model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
-    resolution = model_resolutions.get(MODEL_CONFIG.model_size, 560)
+    # Resolution по розміру моделі
+    resolution = MODEL_RESOLUTIONS.get(MODEL_CONFIG.model_size, 560)
     
     print("\n" + "=" * 70)
     print("RF-DETR TRAINING")
@@ -262,9 +215,12 @@ def main():
         export_config=EXPORT_CONFIG,
         seed=SEED,
     )
-    
-    # Запуск тренування
-    results = trainer.train(dataset_dir=str(DATASET_DIR))
+
+    # Запуск тренування (resume з конфігу передається в train())
+    results = trainer.train(
+        dataset_dir=str(DATASET_DIR),
+        resume=TRAINING_CONFIG.resume,
+    )
     
     # Виведення результатів
     print("\n" + "=" * 70)
@@ -296,7 +252,7 @@ def resume_training(checkpoint_path: str):
         export_config=EXPORT_CONFIG,
         seed=SEED,
     )
-    
+
     print(f"\n[Resume] Продовження тренування з: {checkpoint_path}\n")
     results = trainer.train(dataset_dir=str(DATASET_DIR), resume=checkpoint_path)
     
@@ -311,4 +267,4 @@ if __name__ == "__main__":
     main()
     
     # Режим 2: Продовження з checkpoint
-    # resume_training("runs/rfdetr_training/exp/weights/last.pt")
+    # resume_training("runs/rfdetr_large/training/baseline/weights/last.pt")

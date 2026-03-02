@@ -31,7 +31,7 @@ try:
     trainer = RFDETRTrainer(
         model_config=ModelConfig(model_size='b', num_classes=3),
         training_config=TrainingConfig(epochs=2, batch_size=2, workers=0),
-        augmentation_config=AugmentationConfig(mosaic=0.0, hsv_h=0.0),
+        augmentation_config=AugmentationConfig(mosaic=0.0),
         seed=42,
     )
     print("Trainer created OK")

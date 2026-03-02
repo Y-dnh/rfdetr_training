@@ -39,6 +39,7 @@ class AugmentationConfig:
     # Mosaic: 4 зображення → одне. Центр сітки рандомний.
     mosaic: float = 1.0               # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.5–1.0
     close_mosaic: int = 10            # Діапазон: [0–epochs] | Вимкнути mosaic в останніх N епохах | 0=завжди вимкнено
+    use_albumentations_mosaic: bool = False  # True = A.Mosaic (albumentations), False = наша mosaic.py (legacy). При True потрібен mosaic_metadata у пайплайні.
     
     # MixUp: альфа-блендинг 2 зображень (зазвичай слабкий).
     mixup: float = 0.0                # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.15
@@ -46,37 +47,8 @@ class AugmentationConfig:
     # CutMix: вирізає регіон з іншого зображення і вставляє.
     cutmix: float = 0.0               # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
     
-    # --- Колірні аугментації ---
-    
-    # HSV: gain-фактори зсуву каналів H/S/V. Не ймовірність — сила зсуву.
-    hsv_h: float = 0.015              # Діапазон: [0.0–1.0] | Зсув Hue: ±h_gain*180° | Рекомендовано: 0.0–0.03
-    hsv_s: float = 0.7                # Діапазон: [0.0–1.0] | Масштаб Saturation: ×(1±s_gain) | Рекомендовано: 0.0–0.9
-    hsv_v: float = 0.4                # Діапазон: [0.0–1.0] | Масштаб Value: ×(1±v_gain) | Рекомендовано: 0.0–0.5
-    
-    # Інші колірні аугментації — ймовірності.
-    brightness: float = 0.0           # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
-    contrast: float = 0.0             # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.3
-    blur: float = 0.0                 # Діапазон: [0.0–1.0] | Gaussian blur | Рекомендовано: 0.0–0.2
-    noise: float = 0.0                # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.2
-    noise_type: str = 'gaussian_mono' # Варіанти: 'gaussian_mono'(IR), 'gaussian_rgb'(RGB), 'salt_pepper'
-    
-    # --- Геометричні аугментації ---
-    
-    degrees: float = 0.0              # Діапазон: [0–180] | Поворот ±degrees | Рекомендовано: 0–15 | 0=вимкнено
-    translate: float = 0.1            # Діапазон: [0.0–1.0] | Зсув як частка imgsz | Рекомендовано: 0.0–0.2
-    scale: float = 0.5                # Діапазон: [0.0–0.9] | Масштаб: ×(1±scale) | Рекомендовано: 0.0–0.5 | 0=вимкнено
-    shear: float = 0.0                # Діапазон: [0–90] | Зсув перспективи (градуси) | Рекомендовано: 0–5 | 0=вимкнено
-    perspective: float = 0.0          # Діапазон: [0.0–0.001] | Перспективна деформація | Рекомендовано: 0.0–0.0005
-
-    # --- Відзеркалення ---
-    
-    fliplr: float = 0.5               # Діапазон: [0.0–1.0] | Горизонтальний flip | Рекомендовано: 0.5
-    flipud: float = 0.0               # Діапазон: [0.0–1.0] | Вертикальний flip | Рекомендовано: 0.0 (0.5 для аеро/супутник)
-    
-    # --- Random Erasing (box-aware видалення регіонів) ---
-    
-    erasing: float = 0.0              # Діапазон: [0.0–1.0] | 0=вимкнено | Рекомендовано: 0.0–0.4
-    erasing_value: Union[str, float] = 128  # Варіанти: 0=чорний, 128=сірий, 255=білий, 'random'=шум
+    # Список A.* трансформ (albumentations). None = get_default_albu_config(imgsz). Або свій: [A.Blur(...), A.GaussNoise(...), ...]
+    albumentation_transforms: Optional[List[Any]] = None
     
     # =====================================================================
     # ТОНКІ НАЛАШТУВАННЯ (зазвичай змінювати не потрібно)
@@ -95,60 +67,23 @@ class AugmentationConfig:
     cutmix_min_box_size: int = 10     # Діапазон: ≥1 пікс | Мін. розмір боксу після обрізання | Рекомендовано: 5–20
     cutmix_overlap_thresh: float = 0.1  # Діапазон: [0.0–1.0] | Нижче — бокс не змінюється | Рекомендовано: 0.05–0.2
     
-    # Color
-    brightness_range: Tuple[float, float] = (0.5, 1.5)  # Діапазон: (>0, >0) | Множник: <1=темніше, >1=яскравіше | Рекомендовано: (0.5, 1.5)
-    contrast_range: Tuple[float, float] = (0.5, 1.5)    # Діапазон: (>0, >0) | Множник: <1=менше, >1=більше | Рекомендовано: (0.5, 1.5)
-    blur_kernel_range: Tuple[int, int] = (3, 7)          # Діапазон: (≥3, ≤15) непарні | Рекомендовано: (3, 7) | Більше=сильніший blur
-    noise_strength: Tuple[float, float] = (5.0, 30.0)    # Діапазон: (>0, >0) std dev | Рекомендовано: (5, 30) | Більше=сильніший шум
-    salt_pepper_amount: float = 0.02                      # Діапазон: [0.0–1.0] | Частка пікселів | Рекомендовано: 0.01–0.05
-    
-    # Random Erasing
-    erasing_min_scale: float = 0.02    # Діапазон: [0.0–1.0] < max_scale | Мін. частка площі | Рекомендовано: 0.02
-    erasing_max_scale: float = 0.33    # Діапазон: [0.0–1.0] > min_scale | Макс. частка площі | Рекомендовано: 0.2–0.4
-    erasing_ratio: Tuple[float, float] = (0.3, 3.3)  # Діапазон: (>0, >0) | Aspect ratio вирізу | Рекомендовано: (0.3, 3.3)
-    erasing_min_visible: float = 0.5   # Діапазон: [0.0–1.0] | Мін. видима частина боксу | Рекомендовано: 0.3–0.7
-    erasing_min_box_size: int = 20     # Діапазон: ≥1 пікс | Мін. розмір боксу | Рекомендовано: 10–30
-    
     # LetterBox / Padding
     letterbox_color: Tuple[int, int, int] = (114, 114, 114)  # Діапазон: (0-255, 0-255, 0-255) RGB | (114,114,114)=сірий, (0,0,0)=чорний для IR
     
     def __post_init__(self):
         """Validate configuration values."""
-        # Validate probabilities
-        prob_fields = ['mosaic', 'mixup', 'cutmix', 'fliplr', 'flipud', 'erasing',
-                       'brightness', 'contrast', 'blur', 'noise']
-        for field_name in prob_fields:
+        for field_name in ('mosaic', 'mixup', 'cutmix'):
             value = getattr(self, field_name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be in range [0.0, 1.0], got {value}")
-        
-        # Validate HSV gains
-        hsv_fields = ['hsv_h', 'hsv_s', 'hsv_v']
-        for field_name in hsv_fields:
-            value = getattr(self, field_name)
-            if not 0.0 <= value <= 1.0:
-                raise ValueError(f"{field_name} must be in range [0.0, 1.0], got {value}")
-        
-        # Validate geometric params
-        if self.degrees < 0:
-            raise ValueError(f"degrees must be >= 0, got {self.degrees}")
-        if not 0.0 <= self.translate <= 1.0:
-            raise ValueError(f"translate must be in range [0.0, 1.0], got {self.translate}")
-        if self.scale < 0:
-            raise ValueError(f"scale must be >= 0, got {self.scale}")
-        if self.shear < 0:
-            raise ValueError(f"shear must be >= 0, got {self.shear}")
-        if self.perspective < 0:
-            raise ValueError(f"perspective must be >= 0, got {self.perspective}")
-        
         # Validate image size
         if self.imgsz <= 0:
             raise ValueError(f"imgsz must be > 0, got {self.imgsz}")
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary (all fields)."""
+        """Convert config to dictionary. albumentation_transforms не серіалізується."""
         import dataclasses
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.name != "albumentation_transforms"}
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'AugmentationConfig':

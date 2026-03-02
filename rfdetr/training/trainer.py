@@ -78,6 +78,7 @@ class RFDETRTrainer:
         self.model_config = model_config or ModelConfig()
         self.training_config = training_config or TrainingConfig()
         self.augmentation_config = augmentation_config or AugmentationConfig()
+        # albumentation_transforms беруться з augmentation_config.albumentation_transforms (None => get_default_albu_config(imgsz) у build_dataset)
         self.export_config = export_config or ExportConfig()
         self.seed = seed
         
@@ -119,6 +120,7 @@ class RFDETRTrainer:
         self.current_epoch = 0
         self.best_map = 0.0
         self.class_names = []
+        self._epochs_without_improvement = 0  # для early stopping
         
         # Metrics storage for curves
         self.all_predictions = []
@@ -128,23 +130,22 @@ class RFDETRTrainer:
         self.grid_size = get_grid_size(self.training_config.batch_size)
     
     def _setup_output_dir(self) -> Path:
-        """Set up output directory."""
+        """Set up output directory: project/training/<name>/ (e.g. runs/yolov8s/training/baseline/)."""
         cfg = self.training_config
         base_dir = Path(cfg.project)
+        training_dir = base_dir / "training"
         
         if cfg.exist_ok:
-            save_dir = base_dir / cfg.name
+            save_dir = training_dir / cfg.name
         else:
             i = 1
-            save_dir = base_dir / cfg.name
+            save_dir = training_dir / cfg.name
             while save_dir.exists():
-                save_dir = base_dir / f"{cfg.name}{i}"
+                save_dir = training_dir / f"{cfg.name}{i}"
                 i += 1
         
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / 'weights').mkdir(exist_ok=True)
-        # (save_dir / 'logs').mkdir(exist_ok=True)  # Disabled empty logs folder creation
-        
         return save_dir
     
     def _setup_model_and_criterion(self, num_classes: int):
@@ -236,7 +237,8 @@ class RFDETRTrainer:
             dataset_dir,
             split='train',
             augmentation_config=self.augmentation_config,
-            log_augmentations=True,  # Enable augmentation logging
+            albumentation_transforms=getattr(self.augmentation_config, "albumentation_transforms", None),
+            log_augmentations=True,
         )
         
         # Build validation dataset (minimal augmentations)
@@ -245,6 +247,7 @@ class RFDETRTrainer:
             dataset_dir,
             split='valid',
             augmentation_config=self.augmentation_config,
+            albumentation_transforms=getattr(self.augmentation_config, "albumentation_transforms", None),
             log_augmentations=False,
         )
         
@@ -320,15 +323,29 @@ class RFDETRTrainer:
         return size_to_resolution.get(self.model_config.model_size, 560)
     
     def _setup_scheduler(self, optimizer: torch.optim.Optimizer, num_training_steps: int):
-        """Create learning rate scheduler."""
-        warmup_steps = int(num_training_steps * 0.1)
-        
+        """Create learning rate scheduler (використовує warmup_epochs та scheduler з конфігу)."""
+        steps_per_epoch = max(1, num_training_steps // self.training_config.epochs)
+        warmup_steps = min(
+            self.training_config.warmup_epochs * steps_per_epoch,
+            max(0, num_training_steps - 1),
+        )
+        sched = self.training_config.scheduler.lower()
+
         def lr_lambda(current_step: int):
             if current_step < warmup_steps:
                 return float(current_step) / float(max(1, warmup_steps))
-            else:
-                progress = float(current_step - warmup_steps) / float(max(1, num_training_steps - warmup_steps))
+            progress = float(current_step - warmup_steps) / float(max(1, num_training_steps - warmup_steps))
+            progress = min(1.0, progress)
+            if sched == 'cosine':
                 return 0.01 + (1 - 0.01) * 0.5 * (1 + math.cos(math.pi * progress))
+            if sched == 'linear':
+                return max(0.01, 1.0 - progress)
+            if sched == 'step':
+                # step: 1.0 до 2/3, потім 0.1 до кінця
+                if progress < 2.0 / 3.0:
+                    return 1.0
+                return 0.1
+            return 0.01 + (1 - 0.01) * 0.5 * (1 + math.cos(math.pi * progress))
         
         return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     
@@ -366,13 +383,8 @@ class RFDETRTrainer:
         # Log augmentation config
         self.training_logger.info("Augmentation config:")
         self.training_logger.info(f"  Image size: {self.augmentation_config.imgsz}")
-        self.training_logger.info(f"  Mosaic: {self.augmentation_config.mosaic}")
-        self.training_logger.info(f"  MixUp: {self.augmentation_config.mixup}")
-        self.training_logger.info(f"  HSV: h={self.augmentation_config.hsv_h}, s={self.augmentation_config.hsv_s}, v={self.augmentation_config.hsv_v}")
-        self.training_logger.info(f"  Degrees: {self.augmentation_config.degrees}")
-        self.training_logger.info(f"  Scale: {self.augmentation_config.scale}")
-        self.training_logger.info(f"  Translate: {self.augmentation_config.translate}")
-        self.training_logger.info(f"  Flip LR: {self.augmentation_config.fliplr}")
+        self.training_logger.info(f"  Mosaic: {self.augmentation_config.mosaic}  MixUp: {self.augmentation_config.mixup}  CutMix: {self.augmentation_config.cutmix}")
+        self.training_logger.info("  Color/flip/geometry/erasing: ALBUMENTATION_CONFIG (albumentations)")
         
         # Save configs
         self._save_configs()
@@ -407,9 +419,10 @@ class RFDETRTrainer:
         self.scheduler = self._setup_scheduler(self.optimizer, num_training_steps)
         self.scaler = GradScaler('cuda', enabled=False)
         
-        # Resume if specified
-        if resume:
-            self._load_checkpoint(resume)
+        # Resume if specified (аргумент або training_config.resume)
+        resume_path = resume or (self.training_config.resume or None)
+        if resume_path:
+            self._load_checkpoint(resume_path)
         
         # Save first training batches visualization (with augmentations visible)
         self._save_train_batches_with_aug()
@@ -429,23 +442,42 @@ class RFDETRTrainer:
                 # Train one epoch
                 train_metrics = self._train_epoch(epoch)
                 
-                # Validate
+                # Validate (кожні val_period епох або остання епоха)
                 is_last_epoch = (epoch == self.training_config.epochs - 1)
-                val_metrics = self._validate_epoch(epoch, save_last=is_last_epoch)
-                
-                # Combine metrics
-                all_metrics = {**train_metrics, **val_metrics}
+                val_period = max(1, self.training_config.val_period)
+                do_validate = is_last_epoch or ((epoch + 1) % val_period == 0)
+                if do_validate:
+                    val_metrics = self._validate_epoch(epoch, save_last=is_last_epoch)
+                    all_metrics = {**train_metrics, **val_metrics}
+                else:
+                    all_metrics = {**train_metrics}
                 
                 # Log metrics
                 self.metrics_logger.log_epoch(all_metrics)
                 self.metrics_logger.log_lr(self.optimizer.param_groups[0]['lr'])
                 
-                # Save checkpoint
+                # Save checkpoint (оновлює self.best_map якщо поточний mAP50 кращий)
+                old_best = self.best_map
                 self._save_checkpoint(epoch, all_metrics)
-                
+                if do_validate:
+                    if self.best_map > old_best:
+                        self._epochs_without_improvement = 0
+                    else:
+                        self._epochs_without_improvement += 1
+
                 # Log epoch summary
                 epoch_time = time.time() - epoch_start
                 self._log_epoch_summary(epoch, all_metrics, epoch_time)
+
+                # Early stopping (тільки якщо була валідація і є mAP50)
+                early_stopping = self.training_config.early_stopping
+                if do_validate and early_stopping > 0 and self._epochs_without_improvement >= early_stopping:
+                    best_epoch_1based = epoch + 1 - self._epochs_without_improvement  # остання епоха (1-based), коли mAP50 покращився
+                    self.training_logger.info(
+                        f"Early stopping: no improvement in mAP50 for {early_stopping} epochs "
+                        f"(best mAP50={self.best_map:.4f} at epoch {best_epoch_1based})"
+                    )
+                    break
                 
                 # Save last training batches on final epoch
                 if is_last_epoch:
@@ -1320,7 +1352,7 @@ class RFDETRTrainer:
         pass
     
     def _save_checkpoint(self, epoch: int, metrics: Dict[str, float]) -> None:
-        """Save training checkpoint."""
+        """Save training checkpoint (last.pt завжди; best.pt при покращенні mAP50; epoch_N.pt кожні save_period епох)."""
         checkpoint = {
             'epoch': epoch,
             'model': self.model.state_dict(),
@@ -1329,7 +1361,6 @@ class RFDETRTrainer:
             'metrics': metrics,
             'best_map': self.best_map,
             'class_names': self.class_names,
-            # Add arguments-like object for compatibility if needed, though trainer config differs
         }
         
         torch.save(checkpoint, self.save_dir / 'weights' / 'last.pt')
@@ -1339,6 +1370,10 @@ class RFDETRTrainer:
             self.best_map = current_map
             torch.save(checkpoint, self.save_dir / 'weights' / 'best.pt')
             self.training_logger.debug(f"New best mAP: {self.best_map:.4f}")
+        
+        save_period = self.training_config.save_period
+        if save_period > 0 and (epoch + 1) % save_period == 0:
+            torch.save(checkpoint, self.save_dir / 'weights' / f'epoch_{epoch + 1}.pt')
     
     def _load_checkpoint(self, path: str) -> None:
         """Load training checkpoint."""

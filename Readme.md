@@ -5,105 +5,93 @@
 <h1 align="center">RF-DETR Training Pipeline</h1>
 
 <p align="center">
-  <b>Production-Ready Training Framework with Ultralytics-Style Augmentations</b>
+  <b>Готовий до продакшену фреймворк тренування з аугментаціями в стилі Ultralytics та Albumentations</b>
 </p>
 
 <p align="center">
-  <a href="#key-features">Features</a> &bull;
-  <a href="#quick-start">Quick Start</a> &bull;
-  <a href="#model-variants">Models</a> &bull;
-  <a href="#architecture">Architecture</a> &bull;
-  <a href="#augmentations">Augmentations</a> &bull;
-  <a href="#configuration">Configuration</a> &bull;
-  <a href="#onnx-export">ONNX Export</a> &bull;
-  <a href="#training-outputs">Outputs</a> &bull;
-  <a href="#api-reference">API</a>
+  <a href="#ключові-можливості">Можливості</a> &bull;
+  <a href="#швидкий-старт">Швидкий старт</a> &bull;
+  <a href="#варіанти-моделей">Моделі</a> &bull;
+  <a href="#архітектура-проєкту">Архітектура</a> &bull;
+  <a href="#аугментації">Аугментації</a> &bull;
+  <a href="#конфігурація">Конфігурація</a> &bull;
+  <a href="#експорт-onnx">Експорт ONNX</a> &bull;
+  <a href="#результати-тренування">Результати</a> &bull;
+  <a href="#api">API</a>
 </p>
 
 ---
 
-> **Extended fork of [RF-DETR by Roboflow](https://github.com/roboflow/rf-detr)** — State-of-the-art real-time object detector with a complete, customizable training pipeline inspired by Ultralytics YOLO.
+> **Розширений форк [RF-DETR від Roboflow](https://github.com/roboflow/rf-detr)** — детектор об'єктів у реальному часі з повним пайплайном тренування, типобезпечними конфігами та аугментаціями на базі **Albumentations** і власних композитних кроків (Mosaic, MixUp, CutMix).
 
 ---
 
-## Key Features
+## Ключові можливості
 
-| Feature | Original RF-DETR | This Fork |
-|---------|------------------|-----------|
-| **Augmentations** | Basic (resize, flip) | Full suite: Mosaic, MixUp, CutMix, HSV, Brightness, Contrast, Blur, Noise, Erasing |
-| **Configuration** | argparse CLI | Type-safe dataclasses (`ModelConfig`, `TrainingConfig`, `AugmentationConfig`) |
-| **Visualizations** | TensorBoard only | Batch images, confusion matrix, PR/F1/P/R curves, metrics plots |
-| **Validation** | COCO eval | Extended: markdown reports, per-class stats, detailed analysis |
-| **Dataset** | CocoDetection | `RFDETRDataset` with integrated augmentation pipeline |
-| **Entry Point** | `Model.train()` | Dedicated `RFDETRTrainer` & `RFDETRValidator` classes |
-| **ONNX Export** | CLI-only | Auto-detect model from checkpoint, simplified config-based script |
-| **Box-Aware Augs** | No | CutMix & RandomErasing preserve object visibility |
-| **PyTorch 2.6+ Fix** | No | `dynamo=False` for legacy ONNX exporter compatibility |
+| Можливість | Оригінальний RF-DETR | Цей форк |
+|------------|----------------------|----------|
+| **Аугментації** | Базові (resize, flip) | **Два рівні:** власний пайплайн (Mosaic, MixUp, CutMix, LetterBox) + **Albumentations** (колір, flip, геометрія, blur, noise, CoarseDropout тощо). Повний список трансформ з [explore.albumentations.ai](https://explore.albumentations.ai/). |
+| **Конфігурація** | argparse CLI | Типобезпечні dataclass: `ModelConfig`, `TrainingConfig`, `AugmentationConfig`; окремо **ALBUMENTATION_CONFIG** (список A.* трансформ). |
+| **Mosaic** | Немає | Вибір: **наша** Mosaic (mosaic.py) або **A.Mosaic** (albumentations) через `use_albumentations_mosaic`. |
+| **Візуалізації** | TensorBoard | Батчі train/val, confusion matrix, криві PR/F1/P/R, графіки метрик, превью аугментацій. |
+| **Валідація** | COCO eval | Розширено: markdown-звіти, статистика по класах, детальний аналіз. |
+| **Датасет** | CocoDetection | `RFDETRDataset` з інтегрованим пайплайном аугментацій та підтримкою `albumentation_transforms`. |
+| **Точка входу** | `Model.train()` | Окремі класи `RFDETRTrainer` та `RFDETRValidator`. |
+| **Експорт ONNX** | Тільки CLI | Автовизначення моделі з checkpoint, конфіг в одному місці. |
+| **Box-aware аугментації** | Немає | CutMix та CoarseDropout з урахуванням bbox; фільтрація за видимістю та мін. розміром. |
+| **PyTorch 2.6+** | Проблеми з ONNX | У `export.py` використовується `dynamo=False` для сумісності з legacy ONNX exporter. |
 
 ---
 
-## Quick Start
+## Швидкий старт
 
-### Installation
+### Встановлення
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd rfdetr_training
 
-# Install dependencies
+# Залежності (включає albumentations)
 pip install -e .
 ```
 
-### Training
+Рекомендовано використовувати conda-середовище з усіма залежностями (наприклад `conda activate rfdetr_training_env`).
+
+### Тренування
 
 ```bash
 python train.py
 ```
 
-Edit configuration at the top of `train.py`:
+Налаштування — на початку `train.py`:
 
 ```python
 DATASET_DIR = Path("path/to/your/dataset")
-MODEL_CONFIG = ModelConfig(model_size="m")  # num_classes auto-detected from COCO JSON
+MODEL_CONFIG = ModelConfig(model_size="m")   # num_classes з COCO JSON
 TRAINING_CONFIG = TrainingConfig(epochs=100, batch_size=16)
-AUGMENTATION_CONFIG = AugmentationConfig(mosaic=1.0, mixup=0.3)
+AUGMENTATION_CONFIG = AugmentationConfig(mosaic=0.5, mixup=0.1, cutmix=0.2)
+ALBUMENTATION_CONFIG = get_default_albu_config()  # або свій список A.*
 ```
 
-### Validation
+### Валідація
 
 ```bash
 python val.py
 ```
 
-Configure in `val.py`:
+У `val.py` вказати шлях до моделі, розмір, датасет тощо.
 
-```python
-MODEL_PATH = "runs/training/exp/weights/best.pt"
-MODEL_SIZE = "m"
-DATASET_DIR = Path("path/to/dataset")
-```
-
-### ONNX Export
+### Експорт ONNX
 
 ```bash
 python export_onnx.py
 ```
 
-Configure in `export_onnx.py`:
+Архітектура, роздільність і кількість класів **автоматично визначаються** з checkpoint.
 
-```python
-CHECKPOINT_PATH = r"path/to/model.pt"
-OUTPUT_DIR = None          # None = save next to checkpoint
-SIMPLIFY = True            # onnxsim simplification
-OPSET_VERSION = 17
-```
+### Формат датасету
 
-Model architecture, resolution, and number of classes are **auto-detected** from the checkpoint.
-
-### Dataset Format
-
-Supports both **COCO** (Roboflow export) and **YOLO** formats with auto-detection:
+Підтримуються **COCO** (експорт Roboflow) та **YOLO** з автовизначенням:
 
 ```
 dataset/
@@ -118,533 +106,359 @@ dataset/
 
 ---
 
-## Model Variants
+## Варіанти моделей
 
-### Detection
+### Детекція
 
-| Size | Code | Resolution | Decoder Layers | Params | COCO AP50:95 | Latency (ms) | License |
-|------|------|------------|----------------|--------|--------------|--------------|---------|
-| Nano | `n` | 384x384 | 2 | 30.5M | 48.4 | 2.3 | Apache-2.0 |
-| Small | `s` | 512x512 | 3 | 32.1M | 53.0 | 3.5 | Apache-2.0 |
-| Medium | `m` | 576x576 | 4 | 33.7M | 54.7 | 4.4 | Apache-2.0 |
-| Base | `b` | 560x560 | 3 | 29M | — | — | Apache-2.0 |
-| Large | `l` | 704x704 | 4 | 33.9M | 56.5 | 6.8 | Apache-2.0 |
-| XLarge | `xl` | 700x700 | 5 | 126.4M | 58.6 | 11.5 | PML-1.0 |
-| 2XLarge | `2xl` | 880x880 | 5 | 126.9M | 60.1 | 17.2 | PML-1.0 |
+| Розмір | Код | Роздільність | Параметри | COCO AP50:95 | Латентність (ms) | Ліцензія |
+|--------|-----|--------------|-----------|--------------|------------------|----------|
+| Nano | `n` | 384×384 | 30.5M | 48.4 | 2.3 | Apache-2.0 |
+| Small | `s` | 512×512 | 32.1M | 53.0 | 3.5 | Apache-2.0 |
+| Medium | `m` | 576×576 | 33.7M | 54.7 | 4.4 | Apache-2.0 |
+| Base | `b` | 560×560 | 29M | — | — | Apache-2.0 |
+| Large | `l` | 704×704 | 33.9M | 56.5 | 6.8 | Apache-2.0 |
+| XLarge | `xl` | 700×700 | 126.4M | 58.6 | 11.5 | PML-1.0 |
+| 2XLarge | `2xl` | 880×880 | 126.9M | 60.1 | 17.2 | PML-1.0 |
 
-> **Note**: Base is the original RF-DETR model (patch_size=14, DINOv2-Small). Nano/Small/Medium/Large are newer versions (patch_size=16). XLarge and 2XLarge require `accept_platform_model_license=True`.
-
-> **Important**: Image resolution is **strictly tied** to the model architecture. Unlike Ultralytics YOLO/RT-DETR where `imgsz` is a free parameter, RF-DETR uses a fixed resolution per model size.
-
-### Segmentation
-
-| Size | Resolution | Params | COCO AP50:95 | Latency (ms) |
-|------|------------|--------|--------------|--------------|
-| Nano | 312x312 | 33.6M | 40.3 | 3.4 |
-| Small | 384x384 | 33.7M | 43.1 | 4.4 |
-| Medium | 432x432 | 35.7M | 45.3 | 5.9 |
-| Large | 504x504 | 36.2M | 47.1 | 8.8 |
-| XLarge | 624x624 | 38.1M | 48.8 | 13.5 |
-| 2XLarge | 768x768 | 38.6M | 49.9 | 21.8 |
-
-All latency measured on NVIDIA T4, TensorRT FP16, batch size 1.
+Роздільність зображення **жорстко прив’язана** до архітектури; при тренуванні `imgsz` підставляється з моделі. Для XLarge/2XLarge потрібно `accept_platform_license=True`.
 
 ---
 
-## Architecture
+## Архітектура проєкту
 
 ```
 rfdetr_training/
-├── train.py                      # Training entry point
-├── val.py                        # Validation entry point
-├── export_onnx.py                # ONNX export (auto-detect model)
+├── train.py                          # Вхідна точка тренування
+├── val.py                            # Валідація
+├── export_onnx.py                    # Експорт ONNX (автовизначення з checkpoint)
 │
 └── rfdetr/
-    ├── training/                 # CUSTOM MODULE
-    │   ├── trainer.py            # RFDETRTrainer — full training loop
-    │   ├── validator.py          # RFDETRValidator — validation pipeline
-    │   ├── dataset.py            # RFDETRDataset with augmentations
+    ├── training/                     # Власний модуль тренування
+    │   ├── trainer.py                # RFDETRTrainer — повний цикл тренування
+    │   ├── validator.py              # RFDETRValidator — валідація
+    │   ├── dataset.py                # RFDETRDataset з пайплайном аугментацій
+    │   ├── albumentation_config.py   # get_default_albu_config() — повний список A.* трансформ
     │   │
-    │   ├── augmentations/        # Ultralytics-style augmentations
-    │   │   ├── pipeline.py       # AugmentationPipeline orchestrator
-    │   │   ├── mosaic.py         # Mosaic 4-grid & Mosaic9
-    │   │   ├── mixup.py          # MixUp & CutMix (box-aware)
-    │   │   ├── color.py          # HSV, Brightness, Contrast, Blur, Noise
-    │   │   ├── geometric.py      # Flip, Perspective, LetterBox
-    │   │   ├── erasing.py        # RandomErasing (box-aware)
-    │   │   └── base.py           # BaseTransform, ToTensor, Normalize
+    │   ├── augmentations/
+    │   │   ├── pipeline.py           # AugmentationPipeline: Mosaic → MixUp → CutMix → Albumentations → LetterBox → ToTensor → Normalize
+    │   │   ├── albumentations_wrapper.py  # AlbumentationsWrapper — застосування A.Compose до (image, target)
+    │   │   ├── mosaic.py             # Mosaic 2×2, Mosaic9 (legacy; опційно A.Mosaic)
+    │   │   ├── mixup.py              # MixUp та CutMix (box-aware)
+    │   │   ├── geometric.py         # LetterBox, RandomPerspective (не використовується в пайплайні; геометрія через albu)
+    │   │   ├── erasing.py            # RandomErasing (legacy; заміна — A.CoarseDropout в albu)
+    │   │   ├── color.py              # Legacy color-трансформи (не в пайплайні)
+    │   │   └── base.py               # BaseTransform, ToTensor, Normalize
     │   │
-    │   ├── visualizations/       # YOLO-style outputs
-    │   │   ├── batch_visualizer.py    # Train/Val batch images
-    │   │   ├── confusion_matrix.py    # Confusion matrix
-    │   │   ├── curves.py              # PR, F1, P, R curves
-    │   │   ├── metrics_plotter.py     # Training metrics
-    │   │   └── labels_analyzer.py     # Label distribution
+    │   ├── visualizations/           # Візуалізації в стилі YOLO
+    │   │   ├── batch_visualizer.py
+    │   │   ├── confusion_matrix.py
+    │   │   ├── curves.py
+    │   │   ├── metrics_plotter.py
+    │   │   └── labels_analyzer.py
     │   │
-    │   ├── logging/              # Logging utilities
+    │   ├── logging/
     │   │   └── augmentation_logger.py
     │   │
-    │   └── utils/                # Configuration & utilities
-    │       ├── config.py         # Dataclass configurations
-    │       └── seed.py           # Reproducibility
+    │   └── utils/
+    │       ├── config.py             # ModelConfig, TrainingConfig, AugmentationConfig, ExportConfig
+    │       └── seed.py
     │
-    ├── deploy/                   # Deployment tools
-    │   ├── export.py             # ONNX/TensorRT export core
-    │   └── benchmark.py          # Benchmarking
-    │
-    ├── platform/                 # Platform-licensed models (PML-1.0)
-    │   └── models.py             # RFDETRXLarge, RFDETR2XLarge
-    │
-    ├── config.py                 # RF-DETR model configs (all sizes)
-    ├── main.py                   # Original Model class
-    ├── detr.py                   # DETR implementation
-    ├── models/                   # RF-DETR architecture
-    └── datasets/                 # COCO & YOLO dataset loaders
-        ├── coco.py
-        └── yolo.py
+    ├── deploy/
+    ├── platform/
+    ├── config.py
+    ├── main.py
+    ├── detr.py
+    ├── models/
+    └── datasets/
 ```
 
 ---
 
-## Augmentations
+## Аугментації
 
-### Pipeline Order
+### Два рівні конфігурації
+
+1. **AUGMENTATION_CONFIG** (`AugmentationConfig`) — керує лише тим, що реалізовано в пайплайні власним кодом:
+   - **imgsz** — роздільність (при тренуванні підставляється з моделі).
+   - **mosaic**, **close_mosaic**, **use_albumentations_mosaic** — Mosaic: наша (mosaic.py) або A.Mosaic.
+   - **mixup**, **cutmix** — ймовірності MixUp/CutMix.
+   - Тонкі параметри: **mosaic_scale**, **mosaic_min_box_size**, **mixup_alpha**, **cutmix_alpha**, **cutmix_min_visible**, **cutmix_min_box_size**, **cutmix_overlap_thresh**, **letterbox_color**.
+
+2. **ALBUMENTATION_CONFIG** — список екземплярів трансформ **Albumentations** (A.*). Відповідає за:
+   - колір (HueSaturationValue, RandomBrightnessContrast, CLAHE тощо);
+   - flip (HorizontalFlip, VerticalFlip);
+   - геометрію (ShiftScaleRotate, Perspective, Affine, Rotate тощо);
+   - blur/noise (GaussianBlur, GaussNoise, CoarseDropout тощо).
+
+За замовчуванням використовується `get_default_albu_config()` з модуля `rfdetr.training.albumentation_config` — повний набір Image-Only та Dual трансформ з [explore.albumentations.ai](https://explore.albumentations.ai/). Можна підставити власний список A.* у `train.py`.
+
+### Порядок пайплайну (train)
 
 ```
-Input Image
+Вхідне зображення
     │
     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  1. Mosaic        │ Combine 4 random images in 2x2 grid        │
-├───────────────────┼─────────────────────────────────────────────┤
-│  2. Perspective   │ Rotation, translation, scale, shear        │
-├───────────────────┼─────────────────────────────────────────────┤
-│  3. MixUp         │ Alpha-blend with another image              │
-├───────────────────┼─────────────────────────────────────────────┤
-│  4. CutMix        │ Cut-paste region from another image         │
-├───────────────────┼─────────────────────────────────────────────┤
-│  5. HSV           │ Hue, Saturation, Value adjustments          │
-├───────────────────┼─────────────────────────────────────────────┤
-│  6. Brightness    │ Random brightness multiplier                │
-├───────────────────┼─────────────────────────────────────────────┤
-│  7. Contrast      │ Random contrast multiplier                  │
-├───────────────────┼─────────────────────────────────────────────┤
-│  8. Blur          │ Gaussian blur with random kernel            │
-├───────────────────┼─────────────────────────────────────────────┤
-│  9. Noise         │ Gaussian (mono/RGB) or Salt-and-pepper      │
-├───────────────────┼─────────────────────────────────────────────┤
-│  10. Flip         │ Horizontal / Vertical flip                  │
-├───────────────────┼─────────────────────────────────────────────┤
-│  11. LetterBox    │ Resize with padding to target size          │
-├───────────────────┼─────────────────────────────────────────────┤
-│  12. Erasing      │ Box-aware random region removal             │
-├───────────────────┼─────────────────────────────────────────────┤
-│  13. Normalize    │ ImageNet mean/std normalization             │
-└───────────────────┴─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  1. Mosaic                                                               │
+│     • use_albumentations_mosaic=False: наша Mosaic (4 зображення з       │
+│       датасету, 2×2 сітка, випадковий центр, обріз до imgsz×imgsz).       │
+│     • use_albumentations_mosaic=True: наша не викликається; перед albu   │
+│       в target додається mosaic_metadata (3 додаткові зображення);       │
+│       A.Mosaic у ALBUMENTATION_CONFIG має бути з p>0.                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│  2. MixUp          │ Альфа-блендинг з другим зображенням (наш mixup.py)   │
+├────────────────────┼────────────────────────────────────────────────────┤
+│  3. CutMix         │ Вставка регіону з другого зображення (box-aware)    │
+├────────────────────┼────────────────────────────────────────────────────┤
+│  4. Albumentations │ Один A.Compose з ALBUMENTATION_CONFIG: колір, flip,  │
+│                    │ геометрія (ShiftScaleRotate, Perspective), blur,     │
+│                    │ noise, CoarseDropout тощо; при use_albumentations_  │
+│                    │ mosaic=True також A.Mosaic (якщо є в списку).      │
+├────────────────────┼────────────────────────────────────────────────────┤
+│  5. LetterBox      │ Resize з падінгом до imgsz (наш geometric.py)        │
+├────────────────────┼────────────────────────────────────────────────────┤
+│  6. ToTensor       │ Перетворення в тензор                                │
+├────────────────────┼────────────────────────────────────────────────────┤
+│  7. Normalize     │ ImageNet mean/std (наш base.py)                      │
+└────────────────────┴────────────────────────────────────────────────────┘
     │
     ▼
-Model Input (resolution depends on model size)
+Вхід моделі (тензор, imgsz залежить від розміру моделі)
 ```
 
-### Details
+### Mosaic: наша vs A.Mosaic
 
-**Mosaic** — combines 4 random images into a 2x2 grid around a random center point. `mosaic_scale` controls the center range. `close_mosaic` disables mosaic in the final N epochs.
+| Аспект | Наша (mosaic.py) | A.Mosaic (albumentations) |
+|--------|-------------------|---------------------------|
+| Джерело зображень | Пайплайн сам семплює 4 з датасету через `get_raw_item`. | Очікує `mosaic_metadata` у вхідному словнику (список dict з `image`, `bboxes`, `class_labels`). Пайплайн при `use_albumentations_mosaic=True` сам збирає metadata з датасету. |
+| Параметри | imgsz, mosaic_scale, mosaic_min_box_size, fill_color, p. | grid_yx, target_size, cell_shape, center_range, fit_mode, p (див. [документацію A.Mosaic](https://explore.albumentations.ai/transform/Mosaic/docs)). |
+| Вибір | За замовчуванням (`use_albumentations_mosaic=False`). | Встановити `use_albumentations_mosaic=True` і в ALBUMENTATION_CONFIG мати A.Mosaic з p>0. |
 
-**MixUp** — alpha-blends two images: `output = a * img1 + (1-a) * img2`, where `a ~ Beta(alpha, alpha)`. Higher `mixup_alpha` means weaker mixing.
+Щоб повернутися до нашої Mosaic після тестування A.Mosaic — достатньо встановити `use_albumentations_mosaic=False`.
 
-**CutMix (box-aware)** — cuts a rectangular region from one image and pastes into another. Preserves bounding boxes if >= `cutmix_min_visible` portion remains. Uses `cutmix_overlap_thresh` to skip negligible overlaps. Filters boxes smaller than `cutmix_min_box_size`.
+### Деталі по кроках
 
-**RandomErasing (box-aware)** — randomly erases rectangular regions with configurable fill (`erasing_value`: 0=black, 128=gray). Protects object annotations via `erasing_min_visible` and `erasing_min_box_size`. Area range controlled by `erasing_min_scale` / `erasing_max_scale`, shape by `erasing_ratio`.
+- **Mosaic (наша)** — 4 випадкові зображення з датасету в сітку 2×2 навколо випадкового центру з діапазону `mosaic_scale`; обріз до центрального квадрата imgsz×imgsz. `close_mosaic` вимикає Mosaic в останніх N епохах.
 
-**HSV** — modifies color channels: `H' = H * (1 ± hsv_h)`, etc.
+- **MixUp** — `output = α·img1 + (1−α)·img2`, α ~ Beta(alpha, alpha). Більше `mixup_alpha` — слабше змішування.
 
-**Brightness / Contrast** — random multiplier from configurable range (e.g. `brightness_range=(0.5, 1.5)`).
+- **CutMix (box-aware)** — вирізаний прямокутник з одного зображення вставляється в інше; збереження bbox за умови видимості ≥ `cutmix_min_visible`, мін. розмір боксу `cutmix_min_box_size`, поріг перекриття `cutmix_overlap_thresh`.
 
-**Blur** — Gaussian blur with kernel size from `blur_kernel_range`.
+- **Albumentations** — усі кольорові, геометричні та інші трансформи зі списку (HueSaturationValue, HorizontalFlip, ShiftScaleRotate, Perspective, GaussianBlur, CoarseDropout тощо). Bbox передаються в pascal_voc і оновлюються після spatial-трансформ.
 
-**Noise** — three types: `gaussian_mono` (monochrome, ideal for IR/grayscale), `gaussian_rgb` (per-channel, for color images), `salt_pepper`. Strength controlled by `noise_strength` (Gaussian std dev range) or `salt_pepper_amount` (pixel fraction).
+- **LetterBox** — зміна розміру з падінгом до `imgsz`, колір падінгу `letterbox_color` (наприклад (114,114,114) або (0,0,0) для IR).
 
-### Augmentation Preview
+### Превью аугментацій
 
-Generate visual examples of augmented images with bounding boxes:
+Згенерувати приклади аугментованих зображень з намальованими bbox:
 
 ```bash
 python tests/preview_augmentations.py
 ```
 
-Edit the config at the top of the file to test different augmentation combinations. Output is saved to `tests/augmentation_preview/`.
+Конфігурація — на початку файлу (AUGMENTATION_CONFIG та ALBUMENTATION_CONFIG). Результат зберігається в `tests/augmentation_preview/`.
 
 ---
 
-## Configuration
+## Конфігурація
 
-All scripts use **config-at-the-top** style (no argparse). Edit variables at the top of each file before running.
+Усі скрипти використовують **конфіг на початку файлу** (без argparse).
 
 ### ModelConfig
 
 ```python
 ModelConfig(
     model_size="m",              # n, s, m, b, l, xl, 2xl
-    # num_classes — auto-detected from COCO JSON dataset annotations
-    pretrained_weights=None,     # Path or None for HuggingFace
-    freeze_encoder=False,        # Freeze DINOv2 backbone
-    freeze_encoder_epochs=0,     # Epochs with frozen encoder
-    accept_platform_license=True,  # Required for xl/2xl
+    pretrained_weights=None,     # шлях до .pt або None (HuggingFace)
+    freeze_encoder=False,
+    freeze_encoder_epochs=0,
+    accept_platform_license=True,  # потрібно для xl/2xl
 )
 ```
+
+`num_classes` визначається автоматично з COCO-анотацій датасету.
 
 ### TrainingConfig
 
 ```python
 TrainingConfig(
-    # Project
-    project="runs/training",     # Output directory
-    name="exp",                  # Run name (auto-increments)
-    
-    # Training
+    project="runs/training",
+    name="exp",
     epochs=100,
     batch_size=16,
     lr=1e-4,
     weight_decay=1e-4,
-    
-    # Scheduler
-    scheduler="cosine",          # cosine, step, linear
+    scheduler="cosine",
     warmup_epochs=5,
-    
-    # Gradients
     gradient_accumulation=1,
     grad_clip=0.1,
-    
-    # Validation
     val_period=1,
-    save_period=-1,              # -1 = best/last only
+    save_period=-1,        # -1 = тільки best/last
     early_stopping=50,
-    
-    # Hardware
     device="cuda",
     workers=8,
-    
-    # Visualizations
     vis_batches=3,
 )
 ```
 
 ### AugmentationConfig
 
-The config is split into **main parameters** (probabilities, what to enable) and **fine-tuning** (ranges, thresholds — good defaults, rarely need changing).
+Керує лише пайплайн-кроками (Mosaic, MixUp, CutMix, LetterBox). Колір, flip, геометрія, blur, noise, erasing налаштовуються в **ALBUMENTATION_CONFIG**.
 
 ```python
 AugmentationConfig(
-    # =================================================================
-    # MAIN PARAMETERS (probabilities & strength)
-    # =================================================================
-
-    # Composite augmentations
-    mosaic=1.0,                      # Mosaic 4-in-1 grid (0-1)
-    close_mosaic=10,                 # Disable mosaic in last N epochs
-    mixup=0.0,                       # MixUp alpha-blending (0-1)
-    cutmix=0.0,                      # CutMix cut-paste (0-1)
-
-    # Color
-    hsv_h=0.015,                     # Hue gain (0-1)
-    hsv_s=0.7,                       # Saturation gain (0-1)
-    hsv_v=0.4,                       # Value gain (0-1)
-    brightness=0.0,                  # Brightness change probability (0-1)
-    contrast=0.0,                    # Contrast change probability (0-1)
-    blur=0.0,                        # Gaussian blur probability (0-1)
-    noise=0.0,                       # Noise probability (0-1)
-    noise_type='gaussian_mono',      # 'gaussian_mono', 'gaussian_rgb', 'salt_pepper'
-
-    # Geometric
-    degrees=0.0,                     # Max rotation (± degrees)
-    translate=0.1,                   # Max translation (fraction)
-    scale=0.5,                       # Scale range (± scale)
-    shear=0.0,                       # Max shear (degrees)
-    perspective=0.0,                 # Perspective distortion (0-0.001)
-    fliplr=0.5,                      # Horizontal flip (0-1)
-    flipud=0.0,                      # Vertical flip (0-1)
-
-    # Random Erasing
-    erasing=0.0,                     # Probability (0-1)
-    erasing_value=128,               # Fill: 0=black, 128=gray, 'random'=noise
-
-    # =================================================================
-    # FINE-TUNING (good defaults, rarely need changing)
-    # =================================================================
-
-    # Mosaic
-    mosaic_scale=(0.5, 1.5),         # Center point range
-    mosaic_min_box_size=2,           # Min box size after mosaic (px)
-
-    # MixUp
-    mixup_alpha=32.0,                # Beta distribution alpha
-
-    # CutMix
-    cutmix_alpha=1.0,                # Beta distribution alpha
-    cutmix_min_visible=0.3,          # Min visible box ratio
-    cutmix_min_box_size=10,          # Min box size (px)
-    cutmix_overlap_thresh=0.1,       # Overlap below this keeps box unchanged
-
-    # Color ranges
-    brightness_range=(0.5, 1.5),     # Brightness multiplier range
-    contrast_range=(0.5, 1.5),       # Contrast multiplier range
-    blur_kernel_range=(3, 7),        # Blur kernel size (odd numbers)
-    noise_strength=(5.0, 30.0),      # Gaussian noise std dev range
-    salt_pepper_amount=0.02,         # Salt-and-pepper pixel fraction
-
-    # Erasing
-    erasing_min_scale=0.02,          # Min erased area fraction
-    erasing_max_scale=0.33,          # Max erased area fraction
-    erasing_ratio=(0.3, 3.3),       # Aspect ratio range
-    erasing_min_visible=0.5,         # Min visible box ratio
-    erasing_min_box_size=20,         # Min box size (px)
+    imgsz=640,                        # при тренуванні підставляється з моделі
+    mosaic=1.0,
+    close_mosaic=10,
+    use_albumentations_mosaic=False,  # True = A.Mosaic (потрібен p>0 в ALBUMENTATION_CONFIG)
+    mixup=0.0,
+    cutmix=0.0,
+    mosaic_scale=(0.5, 1.5),
+    mosaic_min_box_size=2,
+    mixup_alpha=32.0,
+    cutmix_alpha=1.0,
+    cutmix_min_visible=0.3,
+    cutmix_min_box_size=10,
+    cutmix_overlap_thresh=0.1,
+    letterbox_color=(114, 114, 114),
 )
 ```
 
+### ALBUMENTATION_CONFIG
+
+Список трансформ Albumentations (стиль Ultralytics [custom albumentations](https://docs.ultralytics.com/guides/yolo-data-augmentation/#custom-albumentations-transforms-augmentations)). За замовчуванням:
+
+```python
+from rfdetr.training import get_default_albu_config
+ALBUMENTATION_CONFIG = get_default_albu_config()
+```
+
+Кастомний приклад:
+
+```python
+import albumentations as A
+ALBUMENTATION_CONFIG = [
+    A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
+    A.HorizontalFlip(p=0.5),
+    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+    A.GaussianBlur(blur_limit=(3, 7), p=0.1),
+    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.5, rotate_limit=10, p=0.5),
+    A.CoarseDropout(num_holes_range=(4, 12), hole_height_range=(16, 48), hole_width_range=(16, 48), fill=128, p=0.3),
+]
+```
+
+Повний перелік трансформ (Image-Only та Dual) з дефолтними параметрами — у `rfdetr/training/albumentation_config.py`; довідка: [explore.albumentations.ai](https://explore.albumentations.ai/).
+
 ---
 
-## ONNX Export
+## Експорт ONNX
 
-### Standalone export
+### Окремий скрипт
 
 ```bash
 python export_onnx.py
 ```
 
-Configure in `export_onnx.py`:
+У `export_onnx.py` задати шлях до checkpoint, OUTPUT_DIR, SIMPLIFY, OPSET_VERSION тощо. З checkpoint **автоматично** визначаються розмір моделі, кількість класів, роздільність.
 
-```python
-CHECKPOINT_PATH = r"path/to/best.pt"   # .pt or .pth — both work
-OUTPUT_DIR = None                       # None = next to checkpoint
-SIMPLIFY = True                         # onnxsim
-OPSET_VERSION = 17
-BATCH_SIZE = 1
-```
+### Автоекспорт після тренування
 
-The script **auto-detects** from the checkpoint:
-- Model size (Nano/Small/Medium/Base/Large/XLarge/2XLarge)
-- Number of classes
-- Resolution
-- Backbone type (DINOv2-Small vs DINOv2-Base)
+При `ExportConfig.enabled=True` у `train.py` після тренування виконується експорт ONNX (і за потреби TensorRT) через `rfdetr/deploy/export.py`.
 
-### Auto-export after training
+### Сумісність з PyTorch 2.6+
 
-Training automatically exports ONNX when `ExportConfig.enabled=True` in `train.py`. The export uses the same `rfdetr/deploy/export.py` core.
-
-### Export pipeline
-
-```
-PyTorch (.pt) --> ONNX (.onnx) --> [optional] onnxsim (.sim.onnx) --> [optional] TensorRT (.engine)
-```
-
-### Checkpoint format
-
-Training saves checkpoints as `.pt` files:
-
-```python
-{
-    'epoch': int,
-    'model': state_dict,
-    'optimizer': state_dict,
-    'lr_scheduler': state_dict,
-    'metrics': dict,
-    'best_map': float,
-    'class_names': list[str],
-}
-```
-
-`.pt` and `.pth` are interchangeable — PyTorch does not distinguish between extensions.
-
-### PyTorch 2.6+ compatibility
-
-Starting with PyTorch 2.6, `torch.onnx.export` introduced a new `dynamo`-based exporter. Since PyTorch 2.9, `dynamo=True` is the **default**. This new exporter fails on RF-DETR's dynamic split/cat operations in the transformer decoder.
-
-Fix applied in `rfdetr/deploy/export.py`: explicit `dynamo=False` forces the legacy TorchScript-based exporter.
+У `rfdetr/deploy/export.py` використовується `dynamo=False` для legacy TorchScript-based ONNX exporter, щоб уникнути помилок на динамічних операціях декодера RF-DETR.
 
 ---
 
-## Training Outputs
+## Результати тренування
 
 ```
 runs/training/exp/
 ├── weights/
-│   ├── best.pt                  # Best model (by mAP)
-│   └── last.pt                  # Latest checkpoint
-│
-├── train_batch0.jpg             # Training batches with augmentations
-├── train_batch1.jpg
-├── train_batch_last0.jpg        # Final batches (no mosaic)
-│
-├── val_batch0_labels.jpg        # Validation: ground truth
-├── val_batch0_pred.jpg          # Validation: predictions
-│
-├── confusion_matrix.png         # Per-class confusion matrix
-├── PR_curve.png                 # Precision-Recall curve
-├── F1_curve.png                 # F1 vs Confidence
-├── P_curve.png                  # Precision vs Confidence
-├── R_curve.png                  # Recall vs Confidence
-├── results.png                  # Training metrics over epochs
-│
-├── config_model.json            # Saved configurations
-├── config_training.json
-├── config_augmentation.json
-├── augmentations_log.json       # Per-sample augmentation log
-└── training.log                 # Full training log
+│   ├── best.pt
+│   └── last.pt
+├── train_batch0.jpg
+├── val_batch0_labels.jpg
+├── val_batch0_pred.jpg
+├── confusion_matrix.png
+├── PR_curve.png, F1_curve.png, P_curve.png, R_curve.png
+├── results.png
+├── config_*.json
+├── augmentations_log.json
+└── training.log
 ```
 
-### Validation Report
-
-The validator generates a comprehensive markdown report:
-
-```
-Overall Performance
-| Metric        | Value  |
-|---------------|--------|
-| mAP@0.5       | 0.6461 |
-| mAP@0.5:0.95  | 0.3765 |
-| Precision     | 0.8715 |
-| Recall        | 0.6508 |
-| F1 Score      | 0.7451 |
-
-Per-Class Performance
-| Class   | GT   | TP   | FP  | FN   | Precision | Recall |
-|---------|------|------|-----|------|-----------|--------|
-| class_0 | 2978 | 2007 | 145 | 971  | 0.933     | 0.674  |
-| class_1 | 2610 | 1563 | 255 | 1047 | 0.860     | 0.599  |
-| class_2 | 746  | 552  | 208 | 194  | 0.726     | 0.740  |
-```
+Валідатор формує markdown-звіт з mAP, precision, recall, F1 та таблицею по класах.
 
 ---
 
-## API Reference
+## API
 
 ### RFDETRTrainer
 
 ```python
-class RFDETRTrainer:
-    def __init__(
-        self,
-        model_config: ModelConfig,
-        training_config: TrainingConfig,
-        augmentation_config: AugmentationConfig,
-        seed: int = 42,
-    ) -> None: ...
-
-    def train(
-        self,
-        dataset_dir: str,
-        resume: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Returns:
-            {
-                'best_map': float,
-                'epochs_trained': int,
-                'save_dir': str,
-            }
-        """
+RFDETRTrainer(
+    model_config=ModelConfig,
+    training_config=TrainingConfig,
+    augmentation_config=AugmentationConfig,
+    albumentation_transforms=None,  # None = get_default_albu_config()
+    seed=42,
+)
+trainer.train(dataset_dir="path/to/dataset", resume=None)
+# Повертає: {'best_map', 'epochs_trained', 'save_dir'}
 ```
 
 ### RFDETRValidator
 
 ```python
-class RFDETRValidator:
-    def __init__(
-        self,
-        model_path: str,
-        model_size: str = "b",
-        imgsz: Optional[int] = None,  # Auto-detect from checkpoint
-        conf_threshold: float = 0.25,
-        iou_threshold: float = 0.5,
-        batch_size: int = 16,
-        workers: int = 8,
-        device: str = "cuda",
-        save_dir: Optional[str] = None,
-        half: bool = True,
-    ) -> None: ...
-
-    def validate(
-        self,
-        dataset_dir: str,
-        split: str = "valid",
-        save_visualizations: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Returns:
-            {
-                'mAP50': float,
-                'mAP50-95': float,
-                'precision': float,
-                'recall': float,
-                'f1': float,
-                'save_dir': str,
-            }
-        """
+RFDETRValidator(model_path="...", model_size="m", ...)
+validator.validate(dataset_dir="...", split="valid", save_visualizations=True)
 ```
 
-### RFDETRDataset
+### RFDETRDataset / build_dataset
 
 ```python
-class RFDETRDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        img_folder: str,
-        ann_file: str,
-        augmentation_config: AugmentationConfig,
-        is_train: bool = True,
-        log_augmentations: bool = False,
-    ) -> None: ...
+from rfdetr.training import build_dataset, AugmentationConfig, get_default_albu_config
 
-    def set_epoch(self, epoch: int, total_epochs: int): ...
-    
-    @property
-    def num_classes(self) -> int: ...
-    
-    @property
-    def class_names(self) -> List[str]: ...
-    
-    @property
-    def coco(self) -> COCO: ...
+dataset = build_dataset(
+    "path/to/dataset",
+    split="train",
+    augmentation_config=AugmentationConfig(...),
+    albumentation_transforms=get_default_albu_config(),  # або свій список A.*
+    log_augmentations=False,
+)
 ```
 
 ---
 
-## Comparison with Ultralytics YOLO
+## Порівняння з Ultralytics YOLO
 
-| Feature | Ultralytics YOLO | This Project |
-|---------|------------------|--------------|
-| Mosaic | Yes | Yes (configurable center range) |
-| MixUp | Yes | Yes (configurable alpha) |
-| CutMix | Yes | Yes (box-aware, configurable overlap threshold) |
-| RandomHSV | Yes | Yes |
-| Brightness/Contrast | Yes | Yes (configurable ranges) |
-| Blur | Yes | Yes (configurable kernel range) |
-| Noise | Limited | 3 types: Gaussian mono, Gaussian RGB, Salt-and-pepper |
-| RandomPerspective | Yes | Yes |
-| RandomErasing | Yes | Yes (box-aware, configurable fill/scale/ratio) |
-| close_mosaic | Yes | Yes |
-| Confusion Matrix | Yes | Yes |
-| PR/F1 Curves | Yes | Yes |
-| Batch Visualizations | Yes | Yes |
-| Augmentation Preview | No | Yes (`tests/preview_augmentations.py`) |
-| Markdown Reports | No | Yes |
-| Augmentation Logging | Yes | Yes |
-| ONNX Auto-Detect | No | Yes |
-| Zero Magic Numbers | No | Yes (all params in AugmentationConfig) |
+| Можливість | Ultralytics YOLO | Цей проєкт |
+|------------|------------------|------------|
+| Mosaic | Так | Так (наша або A.Mosaic, конфіг) |
+| MixUp / CutMix | Так | Так (box-aware) |
+| Колір / flip / геометрія | Власні кроки | **Albumentations** (повний список A.*) |
+| RandomErasing / CoarseDropout | Обмежено | A.CoarseDropout + box-aware логіка в wrapper |
+| close_mosaic | Так | Так |
+| Конфігурація | YAML/CLI | Dataclass + ALBUMENTATION_CONFIG |
+| Превью аугментацій | Ні | Так (`tests/preview_augmentations.py`) |
+| Markdown-звіти валідації | Ні | Так |
+| ONNX з автовизначенням | Ні | Так |
 
 ---
 
-## License
+## Ліцензія
 
-This project is a fork of [RF-DETR](https://github.com/roboflow/rf-detr) with dual licensing:
+Форк [RF-DETR](https://github.com/roboflow/rf-detr):
 
-- **Apache 2.0 License** — Core models (Nano, Small, Medium, Base, Large) and training pipeline
-- **Platform Model License 1.0** — XLarge and 2XLarge models require an active Roboflow platform plan
+- **Apache 2.0** — ядро моделей (Nano, Small, Medium, Base, Large) та пайплайн тренування.
+- **Platform Model License 1.0** — моделі XLarge та 2XLarge потребують активного плану Roboflow.
 
-See [LICENSE](LICENSE), [LICENSE.core](LICENSE.core), and [LICENSE.platform](LICENSE.platform) for details.
+Деталі: [LICENSE](LICENSE), [LICENSE.core](LICENSE.core), [LICENSE.platform](LICENSE.platform).
 
 ---
 
 <p align="center">
-  <sub>Built extending the work by <a href="https://roboflow.com">Roboflow</a></sub>
+  <sub>Проєкт побудовано на основі <a href="https://roboflow.com">Roboflow</a> RF-DETR</sub>
 </p>

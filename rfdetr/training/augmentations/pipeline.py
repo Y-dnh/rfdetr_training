@@ -1,8 +1,17 @@
 """
 Augmentation Pipeline for RF-DETR training.
 
-This module provides the main AugmentationPipeline class that composes
-all augmentations in the correct order.
+Порядок пайплайну (train):
+  1. Mosaic — або наша (mosaic.py), або A.Mosaic з albumentations.
+     Якщо use_albumentations_mosaic=False (за замовчуванням): наша Mosaic, 4 зображення з датасету, 2x2 сітка.
+     Якщо use_albumentations_mosaic=True: наша Mosaic не викликається; перед albu в target додається
+     mosaic_metadata (3 додаткові зображення); A.Mosaic у ALBUMENTATION_CONFIG має бути з p>0 (наприклад p=0.5).
+  2. MixUp — наш (mixup.py).
+  3. CutMix — наш (mixup.py).
+  4. Albumentations — колір, flip, геометрія, CoarseDropout тощо з ALBUMENTATION_CONFIG; при use_albumentations_mosaic
+     також A.Mosaic (якщо є в списку і передано mosaic_metadata).
+  5. LetterBox — наш (geometric.py).
+  6. ToTensor, 7. Normalize — наші (base.py).
 """
 
 import random
@@ -12,12 +21,11 @@ import numpy as np
 import PIL.Image
 import torch
 
-from rfdetr.training.augmentations.base import BaseTransform, Compose, ToTensor, Normalize
-from rfdetr.training.augmentations.color import RandomHSV, RandomBrightness, RandomContrast, RandomBlur, RandomNoise
-from rfdetr.training.augmentations.geometric import RandomFlip, RandomPerspective, LetterBox
+from rfdetr.training.augmentations.base import BaseTransform, ToTensor, Normalize
+from rfdetr.training.augmentations.geometric import LetterBox
 from rfdetr.training.augmentations.mosaic import Mosaic
 from rfdetr.training.augmentations.mixup import MixUp, CutMix
-from rfdetr.training.augmentations.erasing import RandomErasing
+from rfdetr.training.augmentations.albumentations_wrapper import AlbumentationsWrapper
 from rfdetr.training.utils.config import AugmentationConfig
 
 
@@ -25,38 +33,23 @@ class AugmentationPipeline:
     """
     Complete augmentation pipeline for RF-DETR training.
     
-    This pipeline applies augmentations in the correct order:
-    1. Mosaic (combines 4 images)
-    2. RandomPerspective (rotation, scale, shear, perspective)
-    3. MixUp (alpha blending with another image)
-    4. CutMix (cut and paste regions)
-    5. RandomHSV (color augmentation)
-    6. RandomBrightness (brightness adjustment)
-    7. RandomContrast (contrast adjustment)
-    8. RandomBlur (Gaussian blur)
-    9. RandomNoise (Gaussian noise)
-    10. RandomFlip (horizontal/vertical)
-    11. LetterBox (resize with padding)
-    12. RandomErasing (random region erasing)
-    13. ToTensor (convert to tensor)
-    14. Normalize (mean/std normalization)
+    Order: 1) Mosaic (legacy) 2) MixUp 3) CutMix 4) AlbumentationsWrapper
+    (color, flips, geometry, erasing from ALBUMENTATION_CONFIG) 5) LetterBox 6) ToTensor 7) Normalize.
     
     Args:
-        config: AugmentationConfig with all augmentation parameters.
+        config: AugmentationConfig (our custom params: mosaic, mixup, cutmix, imgsz, etc.).
         dataset: Dataset for mosaic/mixup/cutmix (sampling other images).
+        albumentation_transforms: List of A.* transform instances (e.g. from get_default_albu_config()).
+                                 Mosaic is excluded when building the wrapper (single-image only).
         is_train: Whether this is for training (True) or validation (False).
         log_augmentations: Whether to log applied augmentations.
-    
-    Example:
-        >>> config = AugmentationConfig(mosaic=1.0, hsv_h=0.015, fliplr=0.5)
-        >>> pipeline = AugmentationPipeline(config, dataset=train_dataset)
-        >>> image, target = pipeline(image, target, index=0)
     """
     
     def __init__(
         self,
         config: Optional[AugmentationConfig] = None,
         dataset: Any = None,
+        albumentation_transforms: Optional[List[Any]] = None,
         is_train: bool = True,
         log_augmentations: bool = False,
     ):
@@ -64,50 +57,51 @@ class AugmentationPipeline:
         self.dataset = dataset
         self.is_train = is_train
         self.log_augmentations = log_augmentations
+        # A.Mosaic потребує mosaic_metadata; якщо use_albumentations_mosaic=True — не викидаємо A.Mosaic і передаємо metadata в __call__
+        self._use_albu_mosaic = bool(self.config.use_albumentations_mosaic)
+        self._albu_list = self._filter_mosaic_from_albu(
+            albumentation_transforms or [], keep_mosaic=self._use_albu_mosaic
+        )
         
         # Current epoch (for close_mosaic)
         self._current_epoch = 0
         self._total_epochs = 100
-        self._mosaic_was_enabled = None  # Track mosaic state for one-time message
+        self._mosaic_was_enabled = None
         
-        # Build transforms
         self._build_transforms()
-        
-        # Last augmentation log
-        self._last_log = []
+        self._last_log: List[Dict[str, Any]] = []
+    
+    @staticmethod
+    def _filter_mosaic_from_albu(transforms: List[Any], keep_mosaic: bool = False) -> List[Any]:
+        """Exclude A.Mosaic from list (single-image wrapper), unless keep_mosaic=True (use_albumentations_mosaic)."""
+        if keep_mosaic:
+            return list(transforms)
+        out = []
+        for t in transforms:
+            name = getattr(getattr(t, "__class__", None), "__name__", None)
+            if name != "Mosaic":
+                out.append(t)
+        return out
     
     def _build_transforms(self) -> None:
         """Build the augmentation transforms based on config."""
         cfg = self.config
         
         if self.is_train:
-            # Training augmentations
+            # Наша Mosaic (mosaic.py); при use_albumentations_mosaic використовуємо p=0 і A.Mosaic в albu з metadata
             self.mosaic = Mosaic(
                 dataset=self.dataset,
                 imgsz=cfg.imgsz,
                 mosaic_scale=cfg.mosaic_scale,
                 min_box_size=cfg.mosaic_min_box_size,
                 fill_color=cfg.letterbox_color,
-                p=cfg.mosaic,
+                p=cfg.mosaic if not self._use_albu_mosaic else 0.0,
             )
-            
-            self.perspective = RandomPerspective(
-                degrees=cfg.degrees,
-                translate=cfg.translate,
-                scale=cfg.scale,
-                shear=cfg.shear,
-                perspective=cfg.perspective,
-                fill_color=cfg.letterbox_color,
-                p=1.0 if (cfg.degrees > 0 or cfg.translate > 0 or cfg.scale > 0 
-                          or cfg.shear > 0 or cfg.perspective > 0) else 0.0,
-            )
-            
             self.mixup = MixUp(
                 dataset=self.dataset,
                 alpha=cfg.mixup_alpha,
                 p=cfg.mixup,
             )
-            
             self.cutmix = CutMix(
                 dataset=self.dataset,
                 alpha=cfg.cutmix_alpha,
@@ -116,55 +110,11 @@ class AugmentationPipeline:
                 min_box_size=cfg.cutmix_min_box_size,
                 overlap_thresh=cfg.cutmix_overlap_thresh,
             )
-            
-            self.hsv = RandomHSV(
-                h_gain=cfg.hsv_h,
-                s_gain=cfg.hsv_s,
-                v_gain=cfg.hsv_v,
-                p=1.0 if (cfg.hsv_h > 0 or cfg.hsv_s > 0 or cfg.hsv_v > 0) else 0.0,
-            )
-            
-            # Additional color augmentations
-            self.brightness = RandomBrightness(
-                brightness_range=cfg.brightness_range,
-                p=cfg.brightness,
-            )
-            
-            self.contrast = RandomContrast(
-                contrast_range=cfg.contrast_range,
-                p=cfg.contrast,
-            )
-            
-            self.blur = RandomBlur(
-                kernel_size_range=cfg.blur_kernel_range,
-                p=cfg.blur,
-            )
-            
-            self.noise = RandomNoise(
-                noise_type=cfg.noise_type,
-                noise_range=cfg.noise_strength,
-                salt_pepper_amount=cfg.salt_pepper_amount,
-                p=cfg.noise,
-            )
-            
-            self.flip_lr = RandomFlip(
-                p=cfg.fliplr,
-                direction='horizontal',
-            )
-            
-            self.flip_ud = RandomFlip(
-                p=cfg.flipud,
-                direction='vertical',
-            )
-            
-            self.erasing = RandomErasing(
-                p=cfg.erasing,
-                scale=(cfg.erasing_min_scale, cfg.erasing_max_scale),
-                ratio=cfg.erasing_ratio,
-                value=cfg.erasing_value,
-                min_visible_ratio=cfg.erasing_min_visible,
-                min_box_size=cfg.erasing_min_box_size,
-                box_aware=True,  # Enable box-aware erasing
+            # Albumentations: color, flips, erasing, etc. (from ALBUMENTATION_CONFIG)
+            self.albumentations = AlbumentationsWrapper(
+                transforms=self._albu_list,
+                p=1.0,
+                name="Albumentations",
             )
         
         # Common transforms (train and val)
@@ -173,12 +123,10 @@ class AugmentationPipeline:
             color=cfg.letterbox_color,
             p=1.0,
         )
-        
         self.normalize = Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
         )
-        
         self.to_tensor = ToTensor()
     
     def set_dataset(self, dataset: Any) -> None:
@@ -224,7 +172,38 @@ class AugmentationPipeline:
         
         remaining_epochs = self._total_epochs - self._current_epoch
         return remaining_epochs > self.config.close_mosaic
-    
+
+    def _build_mosaic_metadata(self, primary_index: int) -> List[Dict[str, Any]]:
+        """Побудувати mosaic_metadata для A.Mosaic: 3 додаткові зображення з датасету (primary = поточне)."""
+        n = len(self.dataset) if self.dataset else 0
+        if n < 4:
+            return []
+        indices = [primary_index]
+        while len(indices) < 4:
+            idx = random.randint(0, n - 1)
+            if idx not in indices:
+                indices.append(idx)
+        metadata = []
+        for idx in indices[1:]:  # 3 додаткові (без primary)
+            try:
+                img, t = self.dataset.get_raw_item(idx)
+                if isinstance(img, PIL.Image.Image):
+                    img = np.array(img)
+                elif isinstance(img, torch.Tensor):
+                    img = img.permute(1, 2, 0).numpy()
+                    if img.max() <= 1.0:
+                        img = (img * 255).astype(np.uint8)
+                boxes = t.get("boxes", torch.zeros((0, 4)))
+                labels = t.get("labels", torch.zeros(0, dtype=torch.int64))
+                if boxes.dim() == 1:
+                    boxes = boxes.unsqueeze(0)
+                bboxes_list = [tuple(float(x) for x in row) for row in boxes.cpu().numpy().tolist()]
+                class_labels_list = labels.cpu().tolist()
+                metadata.append({"image": np.ascontiguousarray(img), "bboxes": bboxes_list, "class_labels": class_labels_list})
+            except Exception:
+                continue
+        return metadata
+
     def __call__(
         self,
         image: Union[PIL.Image.Image, np.ndarray],
@@ -245,59 +224,30 @@ class AugmentationPipeline:
         self._last_log = []
         
         if self.is_train:
-            # 1. Mosaic
-            if self._should_apply_mosaic():
+            # 1. Mosaic: наша (mosaic.py) або потім A.Mosaic всередині albu з metadata
+            if self._should_apply_mosaic() and not self._use_albu_mosaic:
                 image, target = self.mosaic(image, target, index)
-                self._log_augmentation('Mosaic', self.mosaic)
-            
-            # 2. Perspective/Affine
-            image, target = self.perspective(image, target)
-            self._log_augmentation('RandomPerspective', self.perspective)
-            
-            # 3. MixUp
+                self._log_augmentation("Mosaic", self.mosaic)
+            # 2. MixUp
             image, target = self.mixup(image, target, index)
-            self._log_augmentation('MixUp', self.mixup)
-            
-            # 4. CutMix
+            self._log_augmentation("MixUp", self.mixup)
+            # 3. CutMix
             image, target = self.cutmix(image, target, index)
-            self._log_augmentation('CutMix', self.cutmix)
-            
-            # 5. HSV
-            image, target = self.hsv(image, target)
-            self._log_augmentation('RandomHSV', self.hsv)
-            
-            # 6. Additional color augmentations
-            image, target = self.brightness(image, target)
-            self._log_augmentation('RandomBrightness', self.brightness)
-            
-            image, target = self.contrast(image, target)
-            self._log_augmentation('RandomContrast', self.contrast)
-            
-            image, target = self.blur(image, target)
-            self._log_augmentation('RandomBlur', self.blur)
-            
-            image, target = self.noise(image, target)
-            self._log_augmentation('RandomNoise', self.noise)
-            
-            # 7. Flip
-            image, target = self.flip_lr(image, target)
-            self._log_augmentation('FlipLR', self.flip_lr)
-            
-            image, target = self.flip_ud(image, target)
-            self._log_augmentation('FlipUD', self.flip_ud)
+            self._log_augmentation("CutMix", self.cutmix)
+            # Підготовка mosaic_metadata для A.Mosaic (якщо use_albumentations_mosaic)
+            if self._use_albu_mosaic and self._should_apply_mosaic() and self.config.mosaic > 0:
+                if "mosaic_metadata" not in target and self.dataset is not None and hasattr(self.dataset, "get_raw_item"):
+                    target = dict(target)
+                    target["mosaic_metadata"] = self._build_mosaic_metadata(index)
+            # 4. Albumentations (color, flips, geometry, A.Mosaic якщо є metadata, тощо)
+            image, target = self.albumentations(image, target)
+            self._log_augmentation("Albumentations", self.albumentations)
         
-        # 8. LetterBox (resize with padding)
+        # 5. LetterBox (resize with padding)
         image, target = self.letterbox(image, target)
-        
-        # 9. Random Erasing (after resize, on final image)
-        if self.is_train:
-            image, target = self.erasing(image, target)
-            self._log_augmentation('RandomErasing', self.erasing)
-        
-        # 9. ToTensor
+        # 6. ToTensor
         image, target = self.to_tensor(image, target)
-        
-        # 10. Normalize
+        # 7. Normalize
         image, target = self.normalize(image, target)
         
         return image, target

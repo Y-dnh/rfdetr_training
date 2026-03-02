@@ -52,17 +52,9 @@ def test_dataset_exists():
 def augmentation_config():
     """Create augmentation config for testing."""
     return AugmentationConfig(
-        mosaic=0.0,  # Disable mosaic for simpler testing
+        mosaic=0.0,
         mixup=0.0,
         cutmix=0.0,
-        hsv_h=0.015,
-        hsv_s=0.7,
-        hsv_v=0.4,
-        fliplr=0.5,
-        flipud=0.0,
-        degrees=10.0,
-        translate=0.1,
-        scale=0.5,
         imgsz=640,
     )
 
@@ -260,11 +252,6 @@ class TestFullWorkflow:
         # 1. Create config
         config = AugmentationConfig(
             mosaic=0.0,
-            hsv_h=0.015,
-            hsv_s=0.7,
-            hsv_v=0.4,
-            fliplr=0.5,
-            degrees=5.0,
             imgsz=640,
         )
         

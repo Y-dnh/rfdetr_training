@@ -31,7 +31,6 @@ print(f"TrainingConfig OK: {TRAINING_CONFIG}")
 AUGMENTATION_CONFIG = AugmentationConfig(
     imgsz=640,
     mosaic=1.0,
-    hsv_h=0.015,
 )
 print(f"AugmentationConfig OK: {AUGMENTATION_CONFIG}")
 

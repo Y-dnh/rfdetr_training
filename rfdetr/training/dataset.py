@@ -20,6 +20,7 @@ from pycocotools.coco import COCO
 from rfdetr.datasets.coco import CocoDetection, ConvertCoco
 from rfdetr.training.augmentations.pipeline import AugmentationPipeline, ValidationPipeline
 from rfdetr.training.utils.config import AugmentationConfig
+from rfdetr.training.albumentation_config import get_default_albu_config
 
 
 class RFDETRDataset(torch.utils.data.Dataset):
@@ -38,7 +39,7 @@ class RFDETRDataset(torch.utils.data.Dataset):
         log_augmentations: Whether to log applied augmentations.
     
     Example:
-        >>> config = AugmentationConfig(mosaic=1.0, hsv_h=0.015)
+        >>> config = AugmentationConfig(mosaic=1.0)
         >>> dataset = RFDETRDataset(
         ...     img_folder='data/train',
         ...     ann_file='data/train/_annotations.coco.json',
@@ -53,6 +54,7 @@ class RFDETRDataset(torch.utils.data.Dataset):
         img_folder: Union[str, Path],
         ann_file: Union[str, Path],
         augmentation_config: Optional[AugmentationConfig] = None,
+        albumentation_transforms: Optional[List[Any]] = None,
         is_train: bool = True,
         transforms: Optional[Callable] = None,
         log_augmentations: bool = False,
@@ -89,11 +91,14 @@ class RFDETRDataset(torch.utils.data.Dataset):
         
         # Set up augmentation pipeline
         self.config = augmentation_config or AugmentationConfig()
+        # Список albu: з конфігу (albumentation_transforms) або get_default_albu_config(imgsz)
+        albu_list = albumentation_transforms if albumentation_transforms is not None else get_default_albu_config(imgsz=self.config.imgsz)
         
         if is_train:
             self.pipeline = AugmentationPipeline(
                 config=self.config,
-                dataset=self,  # Pass self for mosaic/mixup
+                dataset=self,
+                albumentation_transforms=albu_list,
                 is_train=True,
                 log_augmentations=log_augmentations,
             )
@@ -270,6 +275,7 @@ def build_dataset(
     dataset_dir: Union[str, Path],
     split: str = 'train',
     augmentation_config: Optional[AugmentationConfig] = None,
+    albumentation_transforms: Optional[List[Any]] = None,
     log_augmentations: bool = False,
 ) -> RFDETRDataset:
     """
@@ -290,7 +296,8 @@ def build_dataset(
     Args:
         dataset_dir: Root directory of the dataset.
         split: One of 'train', 'valid', 'test'.
-        augmentation_config: Augmentation configuration.
+        augmentation_config: Augmentation configuration (our custom: mosaic, mixup, cutmix, imgsz, etc.).
+        albumentation_transforms: List of A.* transforms (ALBUMENTATION_CONFIG). If None, uses get_default_albu_config().
         log_augmentations: Whether to log augmentations.
     
     Returns:
@@ -336,6 +343,7 @@ def build_dataset(
         img_folder=img_folder,
         ann_file=ann_file,
         augmentation_config=augmentation_config,
+        albumentation_transforms=albumentation_transforms,
         is_train=is_train,
         log_augmentations=log_augmentations,
     )

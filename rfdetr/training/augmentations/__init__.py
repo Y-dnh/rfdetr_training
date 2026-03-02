@@ -38,6 +38,7 @@ from rfdetr.training.augmentations.mosaic import Mosaic, Mosaic9
 from rfdetr.training.augmentations.mixup import MixUp, CutMix
 from rfdetr.training.augmentations.erasing import RandomErasing, GridErasing
 from rfdetr.training.augmentations.pipeline import AugmentationPipeline, ValidationPipeline
+from rfdetr.training.augmentations.albumentations_wrapper import AlbumentationsWrapper
 
 __all__ = [
     # Base
@@ -72,4 +73,6 @@ __all__ = [
     # Pipeline
     "AugmentationPipeline",
     "ValidationPipeline",
+    # Albumentations
+    "AlbumentationsWrapper",
 ]

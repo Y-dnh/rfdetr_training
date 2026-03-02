@@ -18,16 +18,16 @@ from rfdetr.training import RFDETRValidator
 # =============================================================================
 # БАЗОВА КОНФІГУРАЦІЯ
 # =============================================================================
-PROJECT_NAME = "rfdetr_validation_old_ver"
+# Та сама папка проєкту, що в train.py. Валідація зберігає в PROJECT_DIR/validation/
+PROJECT_NAME = "rfdetr_large"
+PROJECT_DIR = f"runs/{PROJECT_NAME}"
 
 # Шляхи
 BASE_DIR = Path(__file__).parent
-# DATASET_DIR = BASE_DIR / "dataset"  # Змініть на ваш датасет
-# DATASET_DIR = "D:/dataset_for_training"
-DATASET_DIR = "D:/dataset_for_training"
+DATASET_DIR = "D:/work/dataset"
 
-# Модель
-MODEL_PATH = "D:/rfdetr_dpsu_v8.pth"  # Шлях до .pt файлу навченої моделі
+# Модель (краще вказувати best.pt з runs/.../training/<name>/weights/)
+MODEL_PATH = "D:/rfdetr_dpsu_v8.pth"
 MODEL_SIZE = "m"                # ['n','s','m','b','l','xl','2xl'] | Має відповідати checkpoint'у
 
 
@@ -35,6 +35,7 @@ MODEL_SIZE = "m"                # ['n','s','m','b','l','xl','2xl'] | Має ві
 # КОНФІГУРАЦІЯ ІНФЕРЕНСУ / ВАЛІДАЦІЇ
 # =============================================================================
 INFERENCE_CONFIG = {
+    "split": "valid",
     # -------------------------------------------------------------------------
     # Пороги детекції
     # -------------------------------------------------------------------------
@@ -85,14 +86,14 @@ INFERENCE_CONFIG = {
 def main(
     model_path: str = MODEL_PATH,
     dataset_dir: str = None,
-    split: str = "valid",  # Змінено з "test" на "valid"
+    split: str = None,  
     save_results: bool = True,
     **kwargs
 ):
     """Запуск валідації."""
     dataset_dir = dataset_dir or str(DATASET_DIR)
     config = {**INFERENCE_CONFIG, **kwargs}
-    
+    split = split or config["split"]
     print("\n" + "=" * 70)
     print("RF-DETR VALIDATION")
     print("=" * 70)
@@ -123,16 +124,17 @@ def main(
 
     # Створюємо validator
 
+    validation_dir = Path(PROJECT_DIR) / "validation"
     validator = RFDETRValidator(
         model_path=model_path,
-        model_size=MODEL_SIZE,  # <--- Передаємо розмір
-        imgsz=imgsz,            # <--- Передаємо правильну роздільну здатність
+        model_size=MODEL_SIZE,
+        imgsz=imgsz,
         conf_threshold=config["conf_threshold"],
         iou_threshold=config["iou_threshold"],
         batch_size=config["batch_size"],
         workers=config["workers"],
         device=config["device"],
-        save_dir=f"runs/{PROJECT_NAME}",
+        save_dir=str(validation_dir),
     )
     
     # Запуск валідації
@@ -159,7 +161,7 @@ def main(
 def print_validation_summary(results: dict) -> None:
     """Виводить у консоль розширену звітність: AP по розмірах, AR, per-class AP by area, шляхи."""
     metrics = results.get("metrics") or {}
-    save_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}"))
+    save_dir = Path(results.get("save_dir", Path(PROJECT_DIR) / "validation"))
     num_classes = results.get("num_classes", 0)
 
     print("\n" + "=" * 60)
@@ -206,7 +208,7 @@ def print_validation_summary(results: dict) -> None:
 
 def save_validation_results(results: dict, config: dict = None):
     """Збереження результатів у JSON у форматі як в іншому проєкті (YOLO-style)."""
-    output_dir = Path(results.get("save_dir", f"runs/{PROJECT_NAME}"))
+    output_dir = Path(results.get("save_dir", Path(PROJECT_DIR) / "validation"))
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics = results.get("metrics") or {}
     config = config or INFERENCE_CONFIG
