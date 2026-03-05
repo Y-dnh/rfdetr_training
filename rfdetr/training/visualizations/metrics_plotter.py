@@ -40,89 +40,68 @@ def plot_results(
     smooth_factor: float = 0.6,
 ) -> None:
     """
-    Plot training results in YOLO style (2 rows x 5 cols).
-    
-    Expected keys in results dict:
-    - train/box_loss
-    - train/cls_loss
-    - train/dfl_loss (optional, can be general loss)
-    - metrics/precision
-    - metrics/recall
-    - val/box_loss
-    - val/cls_loss
-    - val/dfl_loss (optional)
-    - metrics/mAP50
-    - metrics/mAP50-95
-    
-    Args:
-        results: Dictionary mapping metric names to lists of values.
-        save_path: Path to save the plot.
-        title: Plot title.
-        smooth_factor: Smoothing factor for curves.
+    Plot training results in YOLO style (6 rows x 5 cols): train losses, val losses,
+    P/R/F1, mAP, AR by size, AP by size.
     """
-    # Define subplot layout (2 rows x 5 cols)
-    fig, axes = plt.subplots(2, 5, figsize=(15, 8))
-    fig.suptitle(title, fontsize=14)
-    
-    # Define metrics to plot
     metrics_layout = [
-        # Row 1: Training metrics
-        ['train/box_loss', 'train/cls_loss', 'train/dfl_loss', 'metrics/precision(B)', 'metrics/recall(B)'],
-        # Row 2: Validation metrics
-        ['val/box_loss', 'val/cls_loss', 'val/dfl_loss', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)'],
+        ['train/box_loss', 'train/cls_loss', 'train/dfl_loss', 'train/class_error', None],
+        ['val/box_loss', 'val/cls_loss', 'val/dfl_loss', 'val/class_error', None],
+        ['metrics/precision(B)', 'metrics/recall(B)', 'metrics/F1(B)', None, None],
+        ['metrics/mAP50(B)', 'metrics/mAP75(B)', 'metrics/mAP50-95(B)', None, None],
+        ['metrics/AR_small(B)', 'metrics/AR_medium(B)', 'metrics/AR_large(B)', None, None],
+        ['metrics/AP_small(B)', 'metrics/AP_medium(B)', 'metrics/AP_large(B)', None, None],
     ]
-    
-    # Alternative keys (for flexibility)
     alt_keys = {
         'train/dfl_loss': ['train/loss', 'train/total_loss'],
         'val/dfl_loss': ['val/loss', 'val/total_loss'],
         'metrics/precision(B)': ['metrics/precision', 'precision'],
         'metrics/recall(B)': ['metrics/recall', 'recall'],
+        'metrics/F1(B)': ['metrics/f1', 'metrics/F1', 'f1'],
         'metrics/mAP50(B)': ['metrics/mAP50', 'mAP50', 'metrics/mAP@0.5'],
+        'metrics/mAP75(B)': ['metrics/mAP75', 'mAP75'],
         'metrics/mAP50-95(B)': ['metrics/mAP50-95', 'mAP50-95', 'metrics/mAP@0.5:0.95', 'metrics/mAP'],
+        'metrics/AR_small(B)': ['metrics/AR_small', 'AR_small'],
+        'metrics/AR_medium(B)': ['metrics/AR_medium', 'AR_medium'],
+        'metrics/AR_large(B)': ['metrics/AR_large', 'AR_large'],
+        'metrics/AP_small(B)': ['metrics/AP_small', 'AP_small'],
+        'metrics/AP_medium(B)': ['metrics/AP_medium', 'AP_medium'],
+        'metrics/AP_large(B)': ['metrics/AP_large', 'AP_large'],
     }
-    
+
     def get_data(key: str) -> Optional[np.ndarray]:
-        """Get data for a metric key, trying alternatives."""
+        if key is None:
+            return None
         if key in results:
             return np.array(results[key])
-        
-        # Try alternative keys
         for alt_key in alt_keys.get(key, []):
             if alt_key in results:
                 return np.array(results[alt_key])
-        
         return None
-    
+
+    fig, axes = plt.subplots(6, 5, figsize=(15, 14))
+    fig.suptitle(title, fontsize=14)
+
     for row_idx, row_metrics in enumerate(metrics_layout):
         for col_idx, metric_key in enumerate(row_metrics):
             ax = axes[row_idx, col_idx]
-            
+            if metric_key is None:
+                ax.axis('off')
+                continue
             data = get_data(metric_key)
-            
             if data is not None and len(data) > 0:
                 x = np.arange(len(data))
-                
-                # Plot raw data
                 ax.plot(x, data, 'o-', markersize=2, alpha=0.7, label='results')
-                
-                # Plot smoothed data
                 if len(data) > 1:
                     smoothed = smooth_data(data, smooth_factor)
                     ax.plot(x, smoothed, '--', linewidth=2, color='orange', alpha=0.8, label='smooth')
-                
                 ax.set_xlabel('Epoch')
                 ax.legend(fontsize=8)
             else:
                 ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            
-            # Set title (metric name)
             ax.set_title(metric_key, fontsize=10)
             ax.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
-    # Save
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -223,12 +202,55 @@ class MetricsLogger:
                 save_path=self.save_dir / 'lr_schedule.png'
             )
     
+    def load_from_csv(self, csv_path: Union[str, Path]) -> None:
+        """
+        Load full history from results.csv (e.g. on resume) into self.metrics and self.lr_values.
+        Column names are normalized by stripping the '(B)' suffix so new epochs append to the same lists.
+        """
+        import csv
+        csv_path = Path(csv_path)
+        if not csv_path.exists():
+            return
+        with open(csv_path, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        if not rows:
+            return
+        # Normalize key: remove (B) suffix for consistency with log_epoch keys
+        def norm_key(k: str) -> str:
+            if k.endswith('(B)'):
+                return k[:-3].strip()
+            return k
+        fieldnames = [fn for fn in reader.fieldnames if fn and fn not in ('epoch', 'time')]
+        for name in fieldnames:
+            norm = norm_key(name)
+            if norm not in self.metrics:
+                self.metrics[norm] = []
+        for row in rows:
+            for name in fieldnames:
+                norm = norm_key(name)
+                val = row.get(name, '').strip()
+                try:
+                    self.metrics[norm].append(float(val) if val else 0.0)
+                except ValueError:
+                    self.metrics[norm].append(0.0)
+        # lr_values from lr/pg0 (one per row)
+        lr_key = 'lr/pg0'
+        if lr_key in (reader.fieldnames or []):
+            for row in rows:
+                val = row.get(lr_key, '').strip()
+                if val:
+                    try:
+                        self.lr_values.append(float(val))
+                    except ValueError:
+                        pass
+    
     def save_csv(self) -> None:
         """Save metrics to CSV file."""
         if not self.metrics:
             return
         
-        csv_path = self.save_dir / 'results.csv'
+        csv_path = self.save_dir / 'metrics.csv'
         
         # Get all metric names and max length
         metric_names = list(self.metrics.keys())

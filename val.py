@@ -9,6 +9,7 @@ Usage:
 """
 
 import json
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -16,18 +17,22 @@ from rfdetr.training import RFDETRValidator
 
 
 # =============================================================================
-# БАЗОВА КОНФІГУРАЦІЯ
+# БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
-# Та сама папка проєкту, що в train.py. Валідація зберігає в PROJECT_DIR/validation/
+# Та сама структура, що в train.py. Валідація зберігає в PROJECT_DIR/validation/
 PROJECT_NAME = "rfdetr_large"
-PROJECT_DIR = f"runs/{PROJECT_NAME}"
-
-# Шляхи
+TRAINING_RUN_NAME = "baseline"   # Назва запуску тренування (training/<name>/)
 BASE_DIR = Path(__file__).parent
-DATASET_DIR = "D:/work/dataset"
+RUNS_DIR = BASE_DIR / "runs"
+# У WSL задай: export RFDETR_DATASET_ROOT=/mnt/d/dataset_for_training
+DATASET_ROOT = os.environ.get("RFDETR_DATASET_ROOT", "D:/dataset_for_training")
+PROJECT_DIR = RUNS_DIR / PROJECT_NAME
+# Датасет (COCO JSON)
+DATASET_DIR = Path(DATASET_ROOT)
 
-# Модель (краще вказувати best.pt з runs/.../training/<name>/weights/)
-MODEL_PATH = "D:/rfdetr_dpsu_v8.pth"
+# Модель: за замовчуванням best.pt з runs/.../training/<name>/weights/
+# Можна перевизначити вручну для зовнішніх checkpoint'ів
+MODEL_PATH = PROJECT_DIR / "training" / TRAINING_RUN_NAME / "weights" / "best.pt"
 MODEL_SIZE = "m"                # ['n','s','m','b','l','xl','2xl'] | Має відповідати checkpoint'у
 
 
@@ -124,7 +129,7 @@ def main(
 
     # Створюємо validator
 
-    validation_dir = Path(PROJECT_DIR) / "validation"
+    validation_dir = PROJECT_DIR / "validation"
     validator = RFDETRValidator(
         model_path=model_path,
         model_size=MODEL_SIZE,
@@ -161,7 +166,7 @@ def main(
 def print_validation_summary(results: dict) -> None:
     """Виводить у консоль розширену звітність: AP по розмірах, AR, per-class AP by area, шляхи."""
     metrics = results.get("metrics") or {}
-    save_dir = Path(results.get("save_dir", Path(PROJECT_DIR) / "validation"))
+    save_dir = Path(results.get("save_dir", PROJECT_DIR / "validation"))
     num_classes = results.get("num_classes", 0)
 
     print("\n" + "=" * 60)
@@ -208,7 +213,7 @@ def print_validation_summary(results: dict) -> None:
 
 def save_validation_results(results: dict, config: dict = None):
     """Збереження результатів у JSON у форматі як в іншому проєкті (YOLO-style)."""
-    output_dir = Path(results.get("save_dir", Path(PROJECT_DIR) / "validation"))
+    output_dir = Path(results.get("save_dir", PROJECT_DIR / "validation"))
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics = results.get("metrics") or {}
     config = config or INFERENCE_CONFIG

@@ -55,17 +55,21 @@ def plot_confusion_matrix(
     class_names: Optional[List[str]] = None,
     include_background: bool = True,
     normalize: bool = False,
+    normalize_axis: Optional[str] = None,
     title: str = "Confusion Matrix",
 ) -> None:
     """
     Plot confusion matrix.
-    
+
     Args:
         matrix: Confusion matrix array.
         save_path: Path to save the plot.
         class_names: List of class names.
         include_background: Whether background class is included.
         normalize: Whether to normalize values.
+        normalize_axis: If normalize=True, 'row' = normalize by rows (axis=1),
+            'column' = normalize by columns (axis=0, P(Predicted|True), True=column).
+            None defaults to 'row'.
         title: Plot title.
     """
     # Prepare labels
@@ -78,13 +82,20 @@ def plot_confusion_matrix(
         labels = list(class_names)
         if include_background and len(labels) == n - 1:
             labels.append('background')
-    
+
     # Normalize if requested
     if normalize:
-        matrix = matrix.astype(np.float32)
-        row_sums = matrix.sum(axis=1, keepdims=True)
-        row_sums = np.where(row_sums == 0, 1, row_sums)  # Avoid division by zero
-        matrix = matrix / row_sums
+        matrix = matrix.astype(np.float32).copy()
+        if normalize_axis == 'column':
+            # Normalize by columns: sum over axis=0 (each column sums to 1)
+            col_sums = matrix.sum(axis=0, keepdims=True)
+            col_sums = np.where(col_sums == 0, 1, col_sums)
+            matrix = matrix / col_sums
+        else:
+            # Normalize by rows (default): sum over axis=1
+            row_sums = matrix.sum(axis=1, keepdims=True)
+            row_sums = np.where(row_sums == 0, 1, row_sums)
+            matrix = matrix / row_sums
     
     # Create figure
     fig_size = max(8, n * 0.8)

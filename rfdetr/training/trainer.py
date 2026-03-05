@@ -147,7 +147,54 @@ class RFDETRTrainer:
         save_dir.mkdir(parents=True, exist_ok=True)
         (save_dir / 'weights').mkdir(exist_ok=True)
         return save_dir
-    
+
+    # Column order for results.csv (YOLO-style); (B) suffix for metric columns
+    RESULTS_CSV_HEADER = [
+        'epoch', 'time',
+        'train/box_loss', 'train/cls_loss', 'train/dfl_loss', 'train/class_error',
+        'metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)',
+        'metrics/mAP75(B)', 'metrics/AP_small(B)', 'metrics/AP_medium(B)', 'metrics/AP_large(B)',
+        'metrics/AR_maxDets1(B)', 'metrics/AR_maxDets10(B)', 'metrics/AR_maxDets100(B)',
+        'metrics/AR_small(B)', 'metrics/AR_medium(B)', 'metrics/AR_large(B)',
+        'val/box_loss', 'val/cls_loss', 'val/dfl_loss', 'val/class_error',
+        'lr/pg0', 'lr/pg1', 'lr/pg2',
+    ]
+
+    def _init_results_csv(self) -> None:
+        """Create results.csv with header if it does not exist (do not overwrite on resume)."""
+        path = self.save_dir / 'results.csv'
+        if path.exists():
+            return
+        with open(path, 'w', newline='', encoding='utf-8') as f:
+            f.write(','.join(self.RESULTS_CSV_HEADER) + '\n')
+
+    def _append_results_csv_row(
+        self, epoch_one_based: int, cumulative_time_sec: float, metrics: Dict[str, float]
+    ) -> None:
+        """Append one row to results.csv and flush. Metrics keys may be with or without (B) suffix."""
+        path = self.save_dir / 'results.csv'
+        # Map CSV column name to metrics key (with or without (B))
+        def get_val(col: str):
+            if col == 'epoch':
+                return str(epoch_one_based)
+            if col == 'time':
+                return f"{cumulative_time_sec:.2f}"
+            if col.startswith('lr/'):
+                idx = {'lr/pg0': 0, 'lr/pg1': 1, 'lr/pg2': 2}[col]
+                groups = self.optimizer.param_groups
+                if idx < len(groups):
+                    return f"{groups[idx]['lr']:.10g}"
+                return f"{groups[-1]['lr']:.10g}" if groups else '0'
+            key_alt = col.replace('(B)', '').strip() if col.endswith('(B)') else col
+            val = metrics.get(col) or metrics.get(key_alt)
+            if val is None:
+                return ''
+            return f"{float(val):.6f}"
+        row = [get_val(c) for c in self.RESULTS_CSV_HEADER]
+        with open(path, 'a', newline='', encoding='utf-8') as f:
+            f.write(','.join(row) + '\n')
+            f.flush()
+
     def _setup_model_and_criterion(self, num_classes: int):
         """Build model, criterion and postprocessor using RF-DETR components."""
         from rfdetr.main import Model
@@ -423,14 +470,19 @@ class RFDETRTrainer:
         resume_path = resume or (self.training_config.resume or None)
         if resume_path:
             self._load_checkpoint(resume_path)
-        
+            results_csv = self.save_dir / 'results.csv'
+            if results_csv.exists():
+                self.metrics_logger.load_from_csv(results_csv)
+
+        self._init_results_csv()
+
         # Save first training batches visualization (with augmentations visible)
         self._save_train_batches_with_aug()
-        
+
         # Training loop
         self.training_logger.info("Starting training loop...")
         start_time = time.time()
-        
+
         try:
             for epoch in range(self.current_epoch, self.training_config.epochs):
                 self.current_epoch = epoch
@@ -468,6 +520,10 @@ class RFDETRTrainer:
                 # Log epoch summary
                 epoch_time = time.time() - epoch_start
                 self._log_epoch_summary(epoch, all_metrics, epoch_time)
+
+                self._append_results_csv_row(
+                    epoch + 1, time.time() - start_time, all_metrics
+                )
 
                 # Early stopping (тільки якщо була валідація і є mAP50)
                 early_stopping = self.training_config.early_stopping
@@ -517,8 +573,8 @@ class RFDETRTrainer:
         total_loss_ce = 0.0
         total_loss_bbox = 0.0
         total_loss_giou = 0.0
+        total_class_error = 0.0
         num_batches = len(self.train_loader)
-        
 
         # Header for progress bar
         print(("%10s" * 7) % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss", "Instances", "Size"))
@@ -572,7 +628,10 @@ class RFDETRTrainer:
             total_loss_ce += loss_dict.get('loss_ce', torch.tensor(0)).item()
             total_loss_bbox += loss_dict.get('loss_bbox', torch.tensor(0)).item()
             total_loss_giou += loss_dict.get('loss_giou', torch.tensor(0)).item()
-            
+            ce_val = loss_dict.get('class_error', None)
+            if ce_val is not None:
+                total_class_error += ce_val.item() if isinstance(ce_val, torch.Tensor) else float(ce_val)
+
             # Update progress bar
             mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
             
@@ -591,6 +650,7 @@ class RFDETRTrainer:
             'train/box_loss': total_loss_bbox / num_batches,
             'train/cls_loss': total_loss_ce / num_batches,
             'train/dfl_loss': total_loss_giou / num_batches,
+            'train/class_error': total_class_error / num_batches,
         }
     
     def _validate_epoch(self, epoch: int, save_last: bool = False) -> Dict[str, float]:
@@ -608,8 +668,9 @@ class RFDETRTrainer:
         total_loss_ce = 0.0
         total_loss_bbox = 0.0
         total_loss_giou = 0.0
+        total_class_error = 0.0
         num_batches = len(self.val_loader)
-        
+
         # Setup COCO evaluator
         base_ds = get_coco_api_from_dataset(self.val_dataset)
         coco_evaluator = CocoEvaluator(base_ds, ['bbox'])
@@ -665,7 +726,10 @@ class RFDETRTrainer:
                 total_loss_ce += loss_dict.get('loss_ce', torch.tensor(0)).item()
                 total_loss_bbox += loss_dict.get('loss_bbox', torch.tensor(0)).item()
                 total_loss_giou += loss_dict.get('loss_giou', torch.tensor(0)).item()
-                
+                ce_val = loss_dict.get('class_error', None)
+                if ce_val is not None:
+                    total_class_error += ce_val.item() if isinstance(ce_val, torch.Tensor) else float(ce_val)
+
                 # Post-process for evaluation
                 # Use letterboxed image size for PostProcessor, then un-letterbox
                 # to original coordinates for COCO eval.
@@ -726,15 +790,24 @@ class RFDETRTrainer:
                 coco_evaluator.accumulate()
                 coco_evaluator.summarize()
         
-        # Extract metrics from COCO eval
+        # Extract metrics from COCO eval (full 12 stats)
         stats = coco_evaluator.coco_eval['bbox'].stats
-        mAP50_95 = stats[0]  # AP @[IoU=0.50:0.95 | area=all | maxDets=100]
-        mAP50 = stats[1]     # AP @[IoU=0.50 | area=all | maxDets=100]
-        # Note: COCO eval doesn't provide single P/R values.
-        # Use mAP50 as proxy for precision, AR@100 for recall.
+        mAP50_95 = float(stats[0])
+        mAP50 = float(stats[1])
+        mAP75 = float(stats[2]) if len(stats) > 2 else 0.0
+        ap_small = float(stats[3]) if len(stats) > 3 else 0.0
+        ap_medium = float(stats[4]) if len(stats) > 4 else 0.0
+        ap_large = float(stats[5]) if len(stats) > 5 else 0.0
+        ar_maxdet1 = float(stats[6]) if len(stats) > 6 else 0.0
+        ar_maxdet10 = float(stats[7]) if len(stats) > 7 else 0.0
+        ar_maxdet100 = float(stats[8]) if len(stats) > 8 else 0.0
+        ar_small = float(stats[9]) if len(stats) > 9 else 0.0
+        ar_medium = float(stats[10]) if len(stats) > 10 else 0.0
+        ar_large = float(stats[11]) if len(stats) > 11 else 0.0
         precision = mAP50
-        recall = stats[8] if len(stats) > 8 else mAP50  # AR@100
-        
+        recall = ar_maxdet100
+        f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
         # Print final metrics (same format as progress bar description, no header - already printed)
         mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
         print(("%10s" * 2 + "%10s" + "%10d" + "%10.4f" * 4) % (
@@ -747,15 +820,27 @@ class RFDETRTrainer:
             mAP50,
             mAP50_95
         ))
-        
+
         return {
             'val/box_loss': total_loss_bbox / num_batches,
             'val/cls_loss': total_loss_ce / num_batches,
             'val/dfl_loss': total_loss_giou / num_batches,
+            'val/class_error': total_class_error / num_batches,
             'metrics/mAP50': mAP50,
             'metrics/mAP50-95': mAP50_95,
+            'metrics/mAP75': mAP75,
             'metrics/precision': precision,
             'metrics/recall': recall,
+            'metrics/f1': f1,
+            'metrics/AP_small': ap_small,
+            'metrics/AP_medium': ap_medium,
+            'metrics/AP_large': ap_large,
+            'metrics/AR_maxDets1': ar_maxdet1,
+            'metrics/AR_maxDets10': ar_maxdet10,
+            'metrics/AR_maxDets100': ar_maxdet100,
+            'metrics/AR_small': ar_small,
+            'metrics/AR_medium': ar_medium,
+            'metrics/AR_large': ar_large,
         }
     
     def _save_train_batches_with_aug(self) -> None:
@@ -1273,7 +1358,17 @@ class RFDETRTrainer:
                             cm[gt_label, num_classes] += 1  # Background column
                 
                 if cm.sum() > 0:
-                    plot_confusion_matrix(cm, self.save_dir / 'confusion_matrix.png', self.class_names)
+                    plot_confusion_matrix(
+                        cm, self.save_dir / 'confusion_matrix.png', self.class_names
+                    )
+                    plot_confusion_matrix(
+                        cm,
+                        self.save_dir / 'confusion_matrix_normalized.png',
+                        self.class_names,
+                        normalize=True,
+                        normalize_axis='column',
+                        title='Confusion Matrix Normalized',
+                    )
                     self.training_logger.info(f"Confusion matrix saved with {int(cm.sum())} samples")
             
             # Generate curves

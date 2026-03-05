@@ -11,6 +11,7 @@ Usage:
 Налаштуйте конфігурацію нижче перед запуском.
 """
 
+import os
 import multiprocessing
 from pathlib import Path
 
@@ -23,16 +24,17 @@ from rfdetr.training import (
     RFDETRTrainer,
 )
 # =============================================================================
-# БАЗОВА КОНФІГУРАЦІЯ
+# БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 SEED = 42
 PROJECT_NAME = "rfdetr_large"
-# Папка проєкту: runs/PROJECT_NAME. train.py зберігає в PROJECT_DIR/training/<name>, val.py — в PROJECT_DIR/validation
-PROJECT_DIR = f"runs/{PROJECT_NAME}"
-
-# Шляхи
 BASE_DIR = Path(__file__).parent
-DATASET_DIR = Path("D:/dataset_for_training")
+RUNS_DIR = BASE_DIR / "runs"
+# У WSL задай: export RFDETR_DATASET_ROOT=/mnt/d/dataset_for_training
+DATASET_ROOT = os.environ.get("RFDETR_DATASET_ROOT", "D:/dataset_for_training")
+PROJECT_DIR = RUNS_DIR / PROJECT_NAME
+# Датасет (COCO JSON): DATASET_ROOT містить train/, valid/, annotations/ тощо
+DATASET_DIR = Path(DATASET_ROOT)
 
 # Модель
 PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для завантаження з HuggingFace
@@ -61,7 +63,7 @@ TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
     # Налаштування проекту (результати в PROJECT_DIR/training/<name>/)
     # -------------------------------------------------------------------------
-    project=PROJECT_DIR,             # runs/yolov8s → training зберігається в runs/yolov8s/training/
+    project=str(PROJECT_DIR),        # runs/.../ → training зберігається в PROJECT_DIR/training/
     name="baseline",                 # Назва запуску: runs/.../training/baseline/
     exist_ok=False,                  # [True/False] True=перезаписати існуючий run
     
