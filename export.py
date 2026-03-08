@@ -17,7 +17,6 @@ Usage:
 import math
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Dict, Any, Optional, Tuple
 
 import torch
@@ -228,6 +227,75 @@ def print_arch_info(arch: Dict[str, Any], metadata: Dict[str, Any]) -> None:
 
 
 # =============================================================================
+# TensorRT КОНВЕРТАЦІЯ (Python API)
+# =============================================================================
+
+def _build_trt_engine(
+    onnx_path: str,
+    fp16: bool = True,
+    verbose: bool = False,
+    workspace_mb: int = 4096,
+) -> Optional[str]:
+    """
+    Конвертація ONNX → TensorRT engine через Python API.
+    Не потребує trtexec у PATH.
+    """
+    try:
+        import tensorrt as trt
+    except ImportError:
+        print("\n  ERROR: tensorrt не встановлено.")
+        print("  pip install --no-cache-dir tensorrt tensorrt-cu12")
+        print("  ONNX модель збережена — можна конвертувати пізніше.")
+        return None
+
+    engine_path = onnx_path.replace('.onnx', '.engine')
+
+    severity = trt.Logger.VERBOSE if verbose else trt.Logger.WARNING
+    logger = trt.Logger(severity)
+
+    print(f"  TensorRT:  {trt.__version__}")
+    print(f"  Workspace: {workspace_mb} MB")
+
+    builder = trt.Builder(logger)
+    network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+    parser = trt.OnnxParser(network, logger)
+
+    with open(onnx_path, 'rb') as f:
+        if not parser.parse(f.read()):
+            for i in range(parser.num_errors):
+                print(f"  ONNX parse error: {parser.get_error(i)}")
+            return None
+
+    config = builder.create_builder_config()
+    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace_mb * (1 << 20))
+
+    if fp16 and builder.platform_has_fast_fp16:
+        config.set_flag(trt.BuilderFlag.FP16)
+        print("  FP16:      enabled (GPU supports fast FP16)")
+    elif fp16:
+        print("  FP16:      requested but GPU has no fast FP16, using FP32")
+
+    print("\n  Будування engine (це може зайняти кілька хвилин)...")
+
+    try:
+        engine_bytes = builder.build_serialized_network(network, config)
+    except Exception as e:
+        print(f"\n  ERROR: Не вдалося зібрати engine: {e}")
+        return None
+
+    if engine_bytes is None:
+        print("\n  ERROR: builder.build_serialized_network повернув None.")
+        print("  Можливо, не вистачає GPU пам'яті або ONNX модель несумісна.")
+        return None
+
+    with open(engine_path, 'wb') as f:
+        f.write(engine_bytes)
+
+    print(f"  Engine збережено: {engine_path}")
+    return engine_path
+
+
+# =============================================================================
 # ГОЛОВНА ФУНКЦІЯ
 # =============================================================================
 
@@ -236,7 +304,6 @@ def main():
     from rfdetr.deploy.export import (
         export_onnx as _export_onnx_raw,
         onnx_simplify as _onnx_simplify,
-        trtexec as _trtexec,
         make_infer_image,
     )
 
@@ -351,31 +418,12 @@ def main():
         print(f"\n[{step}/{total_steps}] Конвертація в TensorRT engine...")
         print(f"  Source:  {onnx_path}")
         print(f"  FP16:    {EXPORT_CONFIG.half}")
-        print(f"  Profile: {EXPORT_CONFIG.trt_profile}")
 
-        import shutil
-        if shutil.which('trtexec') is None:
-            print("\n  ERROR: 'trtexec' не знайдено в PATH.")
-            print("  Встановіть NVIDIA TensorRT SDK: https://developer.nvidia.com/tensorrt")
-            print("  Або додайте шлях до trtexec в системний PATH.")
-            print("  ONNX модель збережена — можна конвертувати пізніше вручну:")
-            print(f"    trtexec --onnx={onnx_path} --saveEngine=model.engine --fp16")
-        else:
-            trt_args = SimpleNamespace(
-                verbose=EXPORT_CONFIG.verbose,
-                profile=EXPORT_CONFIG.trt_profile,
-                dry_run=EXPORT_CONFIG.trt_dry_run,
-            )
-            try:
-                _trtexec(onnx_path, trt_args)
-                engine_path = onnx_path.replace('.onnx', '.engine')
-                if not os.path.exists(engine_path):
-                    print(f"\n  ERROR: TensorRT engine не створено.")
-                    print(f"  Перевірте вивід trtexec вище на наявність помилок.")
-                    engine_path = None
-            except Exception as e:
-                print(f"\n  ERROR: TensorRT конвертація не вдалась: {e}")
-                engine_path = None
+        engine_path = _build_trt_engine(
+            onnx_path=onnx_path,
+            fp16=EXPORT_CONFIG.half,
+            verbose=EXPORT_CONFIG.verbose,
+        )
 
     # ---- Результат ----
     print("\n" + "=" * 70)
