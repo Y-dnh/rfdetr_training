@@ -281,6 +281,10 @@ class ExportConfig:
     batch_size: int = 1               # Діапазон: ≥1 | Batch size при інференсі (ігнорується якщо dynamic_batch=True)
     verbose: bool = False             # True=детальний ONNX export лог | False=тихий режим
     
+    # --- TensorRT (trtexec) ---
+    trt_profile: bool = False         # True=nsys профілювання при TensorRT конвертації
+    trt_dry_run: bool = False         # True=показати trtexec команду без виконання
+    
     def __post_init__(self):
         """Validate configuration values."""
         valid_formats = ['onnx', 'tensorrt', 'both']
@@ -302,6 +306,8 @@ class ExportConfig:
             'half': self.half,
             'batch_size': self.batch_size,
             'verbose': self.verbose,
+            'trt_profile': self.trt_profile,
+            'trt_dry_run': self.trt_dry_run,
         }
     
     @classmethod

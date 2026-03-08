@@ -130,18 +130,17 @@ class RFDETRTrainer:
         self.grid_size = get_grid_size(self.training_config.batch_size)
     
     def _setup_output_dir(self) -> Path:
-        """Set up output directory: project/training/<name>/ (e.g. runs/yolov8s/training/baseline/)."""
+        """Set up output directory: project/<name>/ (e.g. runs/yolov8s/baseline/) — Ultralytics-style."""
         cfg = self.training_config
         base_dir = Path(cfg.project)
-        training_dir = base_dir / "training"
         
         if cfg.exist_ok:
-            save_dir = training_dir / cfg.name
+            save_dir = base_dir / cfg.name
         else:
             i = 1
-            save_dir = training_dir / cfg.name
+            save_dir = base_dir / cfg.name
             while save_dir.exists():
-                save_dir = training_dir / f"{cfg.name}{i}"
+                save_dir = base_dir / f"{cfg.name}{i}"
                 i += 1
         
         save_dir.mkdir(parents=True, exist_ok=True)
