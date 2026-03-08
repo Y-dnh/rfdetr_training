@@ -55,11 +55,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-onnxexport = [
+export = [
     "onnx",
     "onnxsim",
     "onnx_graphsurgeon",
-    "onnxruntime"
+    "onnxruntime",
+]
+export-gpu = [
+    "onnx",
+    "onnxsim",
+    "onnx_graphsurgeon",
+    "onnxruntime-gpu",
+    "tensorrt>=10.0.0",
+    "tensorrt-cu12",
+    "tensorrt-lean",
+    "tensorrt-dispatch",
 ]
 metrics = [
     "tensorboard>=2.13.0",

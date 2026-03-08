@@ -26,9 +26,9 @@ import torch
 from tqdm import tqdm
 
 # Додаємо корінь проєкту в шлях для імпорту tracking та rfdetr
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from tracking import NanoTracker, TrackedObject
 
@@ -37,13 +37,13 @@ from tracking import NanoTracker, TrackedObject
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
-PROJECT_NAME = "rfdetr_large"
+PROJECT_NAME = "rfdetr_dpsu_v8"
 EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
-RUNS_DIR = os.path.join(BASE_DIR, "runs")
-PROJECT_DIR = os.path.join(RUNS_DIR, PROJECT_NAME)
+RUNS_DIR = BASE_DIR / "runs"
+PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
-MODEL_PATH = os.path.join(PROJECT_DIR, EXPERIMENT_NAME, "weights", "best.pt")
-MODEL_SIZE = "l"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pth"
+MODEL_SIZE = "m"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
 # MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # Вхідне відео або папка з відео для трекінгу.
@@ -79,13 +79,13 @@ INFERENCE_CONFIG = {
 # NANOTRACK: ШЛЯХИ ДО ONNX-МОДЕЛЕЙ
 # =============================================================================
 NANOTRACK_VERSION = "v2"  # "v2" або "v3"
-NANOTRACK_DIR = os.path.join(BASE_DIR, "nanotrack")
+NANOTRACK_DIR = BASE_DIR / "nanotrack"
 if NANOTRACK_VERSION == "v3":
-    NANOTRACK_BACKBONE = os.path.join(NANOTRACK_DIR, "v3", "nanotrack_backbone.onnx")
-    NANOTRACK_NECKHEAD = os.path.join(NANOTRACK_DIR, "v3", "nanotrack_head.onnx")
+    NANOTRACK_BACKBONE = NANOTRACK_DIR / "v3" / "nanotrack_backbone.onnx"
+    NANOTRACK_NECKHEAD = NANOTRACK_DIR / "v3" / "nanotrack_head.onnx"
 else:
-    NANOTRACK_BACKBONE = os.path.join(NANOTRACK_DIR, "v2", "nanotrack_backbone_sim.onnx")
-    NANOTRACK_NECKHEAD = os.path.join(NANOTRACK_DIR, "v2", "nanotrack_head_sim.onnx")
+    NANOTRACK_BACKBONE = NANOTRACK_DIR / "v2" / "nanotrack_backbone_sim.onnx"
+    NANOTRACK_NECKHEAD = NANOTRACK_DIR / "v2" / "nanotrack_head_sim.onnx"
 
 
 # =============================================================================
@@ -127,8 +127,8 @@ NANO_IMAGE_RESIZE = None
 # та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
 USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
 
-SAHI_SLICE_WIDTH = 704                   # ширина фрагменту (px)
-SAHI_SLICE_HEIGHT = 704                  # висота фрагменту (px)
+SAHI_SLICE_WIDTH = 576                   # ширина фрагменту (px)
+SAHI_SLICE_HEIGHT = 576                  # висота фрагменту (px)
 SAHI_OVERLAP_WIDTH_RATIO = 0.2            # перекриття по ширині (0.0–1.0)
 SAHI_OVERLAP_HEIGHT_RATIO = 0.2           # перекриття по висоті (0.0–1.0)
 SAHI_PERFORM_STANDARD_PRED = True         # додатково запустити детекцію на повному кадрі

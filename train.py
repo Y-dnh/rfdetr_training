@@ -61,10 +61,10 @@ MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700
 # =============================================================================
 TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
-    # Налаштування проекту (результати в PROJECT_DIR/training/<name>/)
+    # Налаштування проекту (результати в PROJECT_DIR/<name>/ — Ultralytics-style)
     # -------------------------------------------------------------------------
-    project=str(PROJECT_DIR),        # runs/.../ → training зберігається в PROJECT_DIR/training/
-    name="baseline",                 # Назва запуску: runs/.../training/baseline/
+    project=str(PROJECT_DIR),        # runs/.../ → зберігається в PROJECT_DIR/<name>/
+    name="baseline",                 # Назва експерименту: runs/.../baseline/
     exist_ok=False,                  # [True/False] True=перезаписати існуючий run
     
     # -------------------------------------------------------------------------
@@ -269,4 +269,4 @@ if __name__ == "__main__":
     main()
     
     # Режим 2: Продовження з checkpoint
-    # resume_training("runs/rfdetr_large/training/baseline/weights/last.pt")
+    # resume_training("runs/rfdetr_large/baseline/weights/last.pt")
