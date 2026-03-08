@@ -4,6 +4,8 @@
 Усі параметри конфігурації знаходяться на початку файлу.
 
 BENCHMARK_MODE=True: детальний профайлінг (час кожної фази, FPS), звіт *_benchmark.txt
+USE_SAHI=True: Slicing Aided Hyper Inference — нарізка кадру на перекриваючі фрагменти
+  для кращого виявлення дрібних об'єктів у великих кадрах.
 """
 
 import os
@@ -34,20 +36,20 @@ from tracking import NanoTracker, TrackedObject
 # =============================================================================
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
-# Та сама структура, що в train.py та val.py. Модель за замовчуванням з training/<name>/weights/
-PROJECT_NAME = "rf-detr-medium"
-TRAINING_RUN_NAME = "baseline"   # Назва запуску тренування (training/<name>/)
+# Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
+PROJECT_NAME = "rfdetr_large"
+EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
 RUNS_DIR = os.path.join(BASE_DIR, "runs")
 PROJECT_DIR = os.path.join(RUNS_DIR, PROJECT_NAME)
-# Модель: за замовчуванням best.pt з runs/.../training/<name>/weights/
-# Можна перевизначити вручну для зовнішніх checkpoint'ів
-MODEL_PATH = os.path.join(PROJECT_DIR, "training", TRAINING_RUN_NAME, "weights", "rf-detr-medium.pth")
-MODEL_SIZE = "m"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+# Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
+MODEL_PATH = os.path.join(PROJECT_DIR, EXPERIMENT_NAME, "weights", "best.pt")
+MODEL_SIZE = "l"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+# MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # Вхідне відео або папка з відео для трекінгу.
 # Якщо вказана папка — опрацьовуються всі відеофайли у ній (рекурсивно не шукаємо).
 # Вихід: tracked_videos/<назва_моделі>/<ім'я_відео>_tracked.mp4 та .txt з логами.
-VIDEO_INPUT_PATH = "D:/work/test2.mp4"
+VIDEO_INPUT_PATH = "D:/work/diff_stuff/test_videos"
 
 # Benchmark: True = профайлінг (заміри по фазах, звіт _benchmark.txt)
 BENCHMARK_MODE = True
@@ -66,7 +68,7 @@ DETECTION_INTERVAL = 10
 # =============================================================================
 INFERENCE_CONFIG = {
     "conf_threshold": 0.25,   # мінімальний confidence детекції (нижче — відкидається)
-    "iou_threshold": 0.5,     # IoU поріг для NMS (об'єднання дублікатів боксів)
+    "iou_threshold": 0.3,     # IoU поріг для NMS (об'єднання дублікатів боксів)
     "max_det": 300,           # максимум детекцій на один кадр
     "half": True,             # FP16 інференс (швидше на GPU)
     "device": None,           # None = авто (CUDA якщо є)
@@ -91,11 +93,11 @@ else:
 # =============================================================================
 # Не керують тим, коли запускається детекція — лише тим, як довго живуть треки та коли їх показувати.
 
-MAX_AGE = 10        # скільки кадрів трек може жити без оновлення детекцією; після цього видаляється
+MAX_AGE = 20        # скільки кадрів трек може жити без оновлення детекцією; після цього видаляється
 MIN_HITS = 2        # мінімум попадань детекції по треку, щоб трек почали показувати (фільтр шуму)
-IOU_THRESHOLD = 0.3 # мінімальний IoU між боксом детекції та треком, щоб вважати їх одним об'єктом
-CONFIRM_THRESHOLD = 5   # після скількох попадань трек вважається «підтвердженим»
-MIN_SEC_STABLE = 1.0    # мінімальний час (сек) у полі зору, щоб трек став «стабільним»
+IOU_THRESHOLD = 0.25 # мінімальний IoU між боксом детекції та треком, щоб вважати їх одним об'єктом
+CONFIRM_THRESHOLD = 2   # після скількох попадань трек вважається «підтвердженим»
+MIN_SEC_STABLE = 0.25    # мінімальний час (сек) у полі зору, щоб трек став «стабільним»
 
 # Оптичний потік: передбачення руху треків між кадрами (швидше/точніше за багато треків).
 USE_OPTICAL_FLOW_PREDICT = True
@@ -112,6 +114,28 @@ REID_POSITION_WEIGHT = 0.4        # вага позиції у скорі ReID
 REID_APPEARANCE_WEIGHT = 0.4      # вага зовнішнього вигляду
 REID_SIZE_WEIGHT = 0.2            # вага розміру боксу
 REID_MIN_TRACK_QUALITY = 5        # мінімальна «якість» треку (наприклад, hit_streak), щоб його зберігати в ReID-буфері
+
+# Ресайз кадру перед передачею в NanoTrack: None = без ресайзу (повний кадр),
+# int = зменшити до (px, px). Зменшує навантаження на CPU при великій кількості треків.
+NANO_IMAGE_RESIZE = None
+
+
+# =============================================================================
+# SAHI (Slicing Aided Hyper Inference)
+# =============================================================================
+# Розбиває зображення на перекриваючі фрагменти, запускає детекцію на кожному,
+# та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
+USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
+
+SAHI_SLICE_WIDTH = 704                   # ширина фрагменту (px)
+SAHI_SLICE_HEIGHT = 704                  # висота фрагменту (px)
+SAHI_OVERLAP_WIDTH_RATIO = 0.2            # перекриття по ширині (0.0–1.0)
+SAHI_OVERLAP_HEIGHT_RATIO = 0.2           # перекриття по висоті (0.0–1.0)
+SAHI_PERFORM_STANDARD_PRED = True         # додатково запустити детекцію на повному кадрі
+SAHI_POSTPROCESS_TYPE = "NMS"             # "NMS" або "NMM" (Non-Maximum Merging)
+SAHI_POSTPROCESS_MATCH_METRIC = "IOU"     # "IOU" або "IOS" (Intersection over Smaller)
+SAHI_POSTPROCESS_MATCH_THRESHOLD = 0.5    # поріг IoU/IoS для злиття дублікатів між фрагментами
+SAHI_POSTPROCESS_CLASS_AGNOSTIC = False   # True = злиття без урахування класу
 
 
 # =============================================================================
@@ -235,12 +259,12 @@ def _prepare_frame_for_rfdetr(frame_bgr: np.ndarray, imgsz: int):
     return tensor.unsqueeze(0)  # [1, 3, H, W]
 
 
-def run_detection(rfdetr, frame: np.ndarray, frame_w: int, frame_h: int, imgsz: int, conf_threshold: float, max_det: int, classes_filter: list = None) -> list:
+def _run_detection_standard(rfdetr, frame: np.ndarray, frame_w: int, frame_h: int, imgsz: int, conf_threshold: float, max_det: int, classes_filter: list = None) -> list:
     """
-    Інференс RF-DETR на одному кадрі.
+    Стандартна детекція RF-DETR на повному кадрі.
     Модель бачить letterbox (imgsz×imgsz), тому бокси спочатку в просторі letterbox —
     перетворюємо їх у координати оригінального кадру, потім у нормалізовані (0–1).
-    Повертає список dict з ключами 'box' (cx, cy, w, h у 0–1) та 'cls_id'.
+    Повертає список dict з ключами 'box' (cx, cy, w, h у 0–1), 'cls_id', 'conf'.
     """
     device = _get_device()
     images = _prepare_frame_for_rfdetr(frame, imgsz).to(device)
@@ -301,6 +325,212 @@ def run_detection(rfdetr, frame: np.ndarray, frame_w: int, frame_h: int, imgsz: 
         conf = float(scores[i].item())
         detections.append({"box": (cx, cy, w_n, h_n), "cls_id": cls_id, "conf": conf})
     return detections
+
+
+# =============================================================================
+# SAHI helper-функції
+# =============================================================================
+
+def _sahi_generate_slices(
+    img_w: int, img_h: int,
+    slice_w: int, slice_h: int,
+    overlap_w_ratio: float, overlap_h_ratio: float,
+) -> list:
+    """Повертає список (x1, y1, x2, y2) координат перекриваючих фрагментів."""
+    step_x = max(1, int(slice_w * (1 - overlap_w_ratio)))
+    step_y = max(1, int(slice_h * (1 - overlap_h_ratio)))
+    slices = []
+    y = 0
+    while y < img_h:
+        x = 0
+        while x < img_w:
+            x2 = min(x + slice_w, img_w)
+            y2 = min(y + slice_h, img_h)
+            x1 = max(0, x2 - slice_w)
+            y1 = max(0, y2 - slice_h)
+            if (x1, y1, x2, y2) not in slices:
+                slices.append((x1, y1, x2, y2))
+            if x2 >= img_w:
+                break
+            x += step_x
+        if y2 >= img_h:
+            break
+        y += step_y
+    return slices
+
+
+def _sahi_compute_iou(box_a: Tuple, box_b: Tuple) -> float:
+    """IoU між двома боксами (x1, y1, x2, y2) у абсолютних координатах."""
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _sahi_compute_ios(box_a: Tuple, box_b: Tuple) -> float:
+    """IoS (Intersection over Smaller) між двома боксами (x1, y1, x2, y2)."""
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    smaller = min(area_a, area_b)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def _sahi_merge_detections(
+    detections: list,
+    match_threshold: float,
+    match_metric: str = "IOU",
+    postprocess_type: str = "NMS",
+    class_agnostic: bool = False,
+) -> list:
+    """
+    Злиття детекцій після SAHI нарізки.
+    NMS: залишає бокс з найвищим confidence, пригнічує решту з overlap > threshold.
+    NMM: зважене середнє координат боксів, що перекриваються (вага = confidence).
+    """
+    if not detections:
+        return []
+
+    score_fn = _sahi_compute_iou if match_metric.upper() == "IOU" else _sahi_compute_ios
+    sorted_dets = sorted(detections, key=lambda d: d["conf"], reverse=True)
+
+    if postprocess_type.upper() == "NMS":
+        kept = []
+        suppressed = [False] * len(sorted_dets)
+        for i, det_i in enumerate(sorted_dets):
+            if suppressed[i]:
+                continue
+            kept.append(det_i)
+            for j in range(i + 1, len(sorted_dets)):
+                if suppressed[j]:
+                    continue
+                det_j = sorted_dets[j]
+                if not class_agnostic and det_i["cls_id"] != det_j["cls_id"]:
+                    continue
+                score = score_fn(det_i["box_abs"], det_j["box_abs"])
+                if score >= match_threshold:
+                    suppressed[j] = True
+        result = []
+        for d in kept:
+            result.append({"box": d["box"], "cls_id": d["cls_id"], "conf": d["conf"]})
+        return result
+
+    # NMM: зважене середнє
+    merged_flags = [False] * len(sorted_dets)
+    result = []
+    for i, det_i in enumerate(sorted_dets):
+        if merged_flags[i]:
+            continue
+        group = [det_i]
+        for j in range(i + 1, len(sorted_dets)):
+            if merged_flags[j]:
+                continue
+            det_j = sorted_dets[j]
+            if not class_agnostic and det_i["cls_id"] != det_j["cls_id"]:
+                continue
+            score = score_fn(det_i["box_abs"], det_j["box_abs"])
+            if score >= match_threshold:
+                group.append(det_j)
+                merged_flags[j] = True
+        total_conf = sum(d["conf"] for d in group)
+        if total_conf <= 0:
+            result.append({"box": det_i["box"], "cls_id": det_i["cls_id"], "conf": det_i["conf"]})
+            continue
+        cx = sum(d["box"][0] * d["conf"] for d in group) / total_conf
+        cy = sum(d["box"][1] * d["conf"] for d in group) / total_conf
+        w = sum(d["box"][2] * d["conf"] for d in group) / total_conf
+        h = sum(d["box"][3] * d["conf"] for d in group) / total_conf
+        best_conf = group[0]["conf"]
+        result.append({"box": (cx, cy, w, h), "cls_id": det_i["cls_id"], "conf": best_conf})
+    return result
+
+
+def _run_detection_sahi(rfdetr, frame: np.ndarray, frame_w: int, frame_h: int, imgsz: int, conf_threshold: float, max_det: int, classes_filter: list = None) -> list:
+    """
+    SAHI детекція: нарізка кадру на перекриваючі фрагменти → інференс на кожному →
+    трансформація координат у простір повного кадру → (опціонально) інференс на повному кадрі →
+    злиття через NMS/NMM.
+    """
+    slices = _sahi_generate_slices(
+        frame_w, frame_h,
+        SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT,
+        SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO,
+    )
+    all_detections = []
+
+    for (sx1, sy1, sx2, sy2) in slices:
+        tile = frame[sy1:sy2, sx1:sx2]
+        tile_w = sx2 - sx1
+        tile_h = sy2 - sy1
+        if tile_w <= 0 or tile_h <= 0:
+            continue
+        tile_dets = _run_detection_standard(rfdetr, tile, tile_w, tile_h, imgsz, conf_threshold, max_det, classes_filter)
+        for d in tile_dets:
+            cx_t, cy_t, w_t, h_t = d["box"]
+            # нормалізовані координати тайлу → пікселі повного кадру
+            cx_px = cx_t * tile_w + sx1
+            cy_px = cy_t * tile_h + sy1
+            w_px = w_t * tile_w
+            h_px = h_t * tile_h
+            # абсолютні координати для IoU/IoS
+            abs_x1 = cx_px - w_px / 2
+            abs_y1 = cy_px - h_px / 2
+            abs_x2 = cx_px + w_px / 2
+            abs_y2 = cy_px + h_px / 2
+            # нормалізовані координати повного кадру
+            cx_n = cx_px / frame_w
+            cy_n = cy_px / frame_h
+            w_n = w_px / frame_w
+            h_n = h_px / frame_h
+            all_detections.append({
+                "box": (cx_n, cy_n, w_n, h_n),
+                "cls_id": d["cls_id"],
+                "conf": d["conf"],
+                "box_abs": (abs_x1, abs_y1, abs_x2, abs_y2),
+            })
+
+    if SAHI_PERFORM_STANDARD_PRED:
+        std_dets = _run_detection_standard(rfdetr, frame, frame_w, frame_h, imgsz, conf_threshold, max_det, classes_filter)
+        for d in std_dets:
+            cx, cy, w, h = d["box"]
+            abs_x1 = (cx - w / 2) * frame_w
+            abs_y1 = (cy - h / 2) * frame_h
+            abs_x2 = (cx + w / 2) * frame_w
+            abs_y2 = (cy + h / 2) * frame_h
+            all_detections.append({
+                "box": d["box"],
+                "cls_id": d["cls_id"],
+                "conf": d["conf"],
+                "box_abs": (abs_x1, abs_y1, abs_x2, abs_y2),
+            })
+
+    return _sahi_merge_detections(
+        all_detections,
+        match_threshold=SAHI_POSTPROCESS_MATCH_THRESHOLD,
+        match_metric=SAHI_POSTPROCESS_MATCH_METRIC,
+        postprocess_type=SAHI_POSTPROCESS_TYPE,
+        class_agnostic=SAHI_POSTPROCESS_CLASS_AGNOSTIC,
+    )
+
+
+def run_detection(rfdetr, frame: np.ndarray, frame_w: int, frame_h: int, imgsz: int, conf_threshold: float, max_det: int, classes_filter: list = None) -> list:
+    """
+    Запуск детекції на кадрі. При USE_SAHI=True використовує SAHI (нарізка на фрагменти),
+    інакше — звичайний інференс на повному кадрі.
+    Повертає список dict з ключами 'box' (cx, cy, w, h у 0–1), 'cls_id', 'conf'.
+    """
+    if USE_SAHI:
+        return _run_detection_sahi(rfdetr, frame, frame_w, frame_h, imgsz, conf_threshold, max_det, classes_filter)
+    return _run_detection_standard(rfdetr, frame, frame_w, frame_h, imgsz, conf_threshold, max_det, classes_filter)
 
 
 def _vis_get_text_size(text: str) -> Tuple[int, int]:
@@ -485,6 +715,19 @@ def _generate_benchmark_report(stats: BenchmarkStats, pipeline_total: float,
             lines.append(f"    {'imgsz':16s} = {imgsz}")
         elif k in cfg:
             lines.append(f"    {k:16s} = {cfg[k]}")
+    lines.append("")
+    lines.append(f"  SAHI:             {'ON' if USE_SAHI else 'OFF'}")
+    if USE_SAHI:
+        n_slices_bm = len(_sahi_generate_slices(width, height, SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT,
+                                                 SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO))
+        lines.extend([
+            f"    Slice size:       {SAHI_SLICE_WIDTH}x{SAHI_SLICE_HEIGHT} px",
+            f"    Overlap:          {SAHI_OVERLAP_WIDTH_RATIO:.0%} x {SAHI_OVERLAP_HEIGHT_RATIO:.0%}",
+            f"    Slices/frame:     {n_slices_bm}",
+            f"    Full-frame pred:  {SAHI_PERFORM_STANDARD_PRED}",
+            f"    Postprocess:      {SAHI_POSTPROCESS_TYPE} ({SAHI_POSTPROCESS_MATCH_METRIC}, thr={SAHI_POSTPROCESS_MATCH_THRESHOLD})",
+            f"    Class agnostic:   {SAHI_POSTPROCESS_CLASS_AGNOSTIC}",
+        ])
     lines.extend([
         "",
         "-" * 72, "  TOTAL PIPELINE", "-" * 72,
@@ -661,6 +904,18 @@ def run_tracking(
     print(f"Кадрів: {total_frames}, {fps:.1f} FPS, {width}x{height}")
     print(f"Детекція кожні: {detection_interval} фреймів")
     print(f"Інференс: conf={conf_threshold}, iou={cfg.get('iou_threshold')}, imgsz={imgsz}, max_det={max_det}, half={cfg.get('half')}")
+    if USE_SAHI:
+        n_slices = len(_sahi_generate_slices(width, height, SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT,
+                                             SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO))
+        print(f"SAHI: ON  |  вікно={SAHI_SLICE_WIDTH}x{SAHI_SLICE_HEIGHT}, "
+              f"перекриття={SAHI_OVERLAP_WIDTH_RATIO:.0%}x{SAHI_OVERLAP_HEIGHT_RATIO:.0%}, "
+              f"фрагментів={n_slices}, повний_кадр={SAHI_PERFORM_STANDARD_PRED}, "
+              f"злиття={SAHI_POSTPROCESS_TYPE}({SAHI_POSTPROCESS_MATCH_METRIC}, "
+              f"thr={SAHI_POSTPROCESS_MATCH_THRESHOLD})")
+    else:
+        print("SAHI: OFF")
+    if NANO_IMAGE_RESIZE is not None:
+        print(f"NanoTrack resize: {NANO_IMAGE_RESIZE}x{NANO_IMAGE_RESIZE}")
     if benchmark_mode:
         print(f"Benchmark: CUDA_SYNC={BENCHMARK_CUDA_SYNC}, WRITE_VIDEO={BENCHMARK_WRITE_VIDEO}, MAX_FRAMES={BENCHMARK_MAX_FRAMES}")
     print("=" * 60)
@@ -725,6 +980,11 @@ def run_tracking(
             pbar.update(1)
             frame_h, frame_w = frame.shape[:2]
 
+            if NANO_IMAGE_RESIZE is not None and tracker is not None:
+                tracker_frame = cv2.resize(frame, (NANO_IMAGE_RESIZE, NANO_IMAGE_RESIZE))
+            else:
+                tracker_frame = frame
+
             is_det_frame = (frame_counter % detection_interval == 1 or frame_counter == 1)
             num_detections = 0
             t_detect = 0.0
@@ -752,7 +1012,7 @@ def run_tracking(
                     t_track_s = time.perf_counter()
                 if tracker is not None:
                     try:
-                        last_tracked = tracker.update(detections, frame)
+                        last_tracked = tracker.update(detections, tracker_frame)
                     except Exception as e:
                         print(f"Помилка трекера (кадр {frame_counter}): {e}")
                         last_tracked = []
@@ -777,7 +1037,7 @@ def run_tracking(
                     t_track_s = time.perf_counter()
                 if tracker is not None:
                     try:
-                        last_tracked = tracker.update(None, frame)
+                        last_tracked = tracker.update(None, tracker_frame)
                     except Exception:
                         pass
                 if benchmark_stats:
@@ -880,9 +1140,31 @@ def run_tracking(
         "--- ДЕТЕКЦІЯ ---",
         f"  DETECTION_INTERVAL: {detection_interval}  # кожні N фреймів",
         "",
+        "--- SAHI (Slicing Aided Hyper Inference) ---",
+        f"  USE_SAHI: {USE_SAHI}",
+    ])
+    if USE_SAHI:
+        n_slices_log = len(_sahi_generate_slices(width, height, SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT,
+                                                  SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO))
+        log_lines.extend([
+            f"  SAHI_SLICE_WIDTH: {SAHI_SLICE_WIDTH}",
+            f"  SAHI_SLICE_HEIGHT: {SAHI_SLICE_HEIGHT}",
+            f"  SAHI_OVERLAP_WIDTH_RATIO: {SAHI_OVERLAP_WIDTH_RATIO}",
+            f"  SAHI_OVERLAP_HEIGHT_RATIO: {SAHI_OVERLAP_HEIGHT_RATIO}",
+            f"  SAHI_PERFORM_STANDARD_PRED: {SAHI_PERFORM_STANDARD_PRED}",
+            f"  SAHI_POSTPROCESS_TYPE: {SAHI_POSTPROCESS_TYPE}",
+            f"  SAHI_POSTPROCESS_MATCH_METRIC: {SAHI_POSTPROCESS_MATCH_METRIC}",
+            f"  SAHI_POSTPROCESS_MATCH_THRESHOLD: {SAHI_POSTPROCESS_MATCH_THRESHOLD}",
+            f"  SAHI_POSTPROCESS_CLASS_AGNOSTIC: {SAHI_POSTPROCESS_CLASS_AGNOSTIC}",
+            f"  Фрагментів на кадр: {n_slices_log}",
+        ])
+    log_lines.extend([
+        "",
         "--- NANOTRACK ---",
         f"  NANOTRACK_BACKBONE: {NANOTRACK_BACKBONE}",
         f"  NANOTRACK_NECKHEAD: {NANOTRACK_NECKHEAD}",
+        f"  NANO_IMAGE_RESIZE: {NANO_IMAGE_RESIZE}",
+        f"  Tracker resize:   {f'{NANO_IMAGE_RESIZE}x{NANO_IMAGE_RESIZE}' if NANO_IMAGE_RESIZE else 'OFF (full frame)'}",
         "",
         "--- ПАРАМЕТРИ ТРЕКИНГУ (NanoTracker) ---",
         f"  MAX_AGE: {MAX_AGE}",
