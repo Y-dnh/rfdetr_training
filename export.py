@@ -28,14 +28,14 @@ from rfdetr.training import ExportConfig
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style).
-PROJECT_NAME = "rfdetr_dpsu_v8"
+PROJECT_NAME = "rfdetr_large"
 EXPERIMENT_NAME = "baseline"          # Експеримент тренування, звідки брати модель
 BASE_DIR = Path(__file__).parent
 RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
-CHECKPOINT_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pth"
+CHECKPOINT_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pt"
 OUTPUT_DIR = None                     # None = поруч з checkpoint
 
 

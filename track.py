@@ -37,19 +37,19 @@ from tracking import NanoTracker, TrackedObject
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
-PROJECT_NAME = "rfdetr_dpsu_v8"
+PROJECT_NAME = "rfdetr_large"
 EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
 RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
-MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pth"
-MODEL_SIZE = "m"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "inference_model.sim.engine"
+MODEL_SIZE = "l"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
 # MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # Вхідне відео або папка з відео для трекінгу.
 # Якщо вказана папка — опрацьовуються всі відеофайли у ній (рекурсивно не шукаємо).
 # Вихід: tracked_videos/<назва_моделі>/<ім'я_відео>_tracked.mp4 та .txt з логами.
-VIDEO_INPUT_PATH = "D:/work/diff_stuff/test_videos"
+VIDEO_INPUT_PATH = "D:/work/diff_stuff/test_videos/Ужгород_камера_2_1.mkv"
 
 # Benchmark: True = профайлінг (заміри по фазах, звіт _benchmark.txt)
 BENCHMARK_MODE = True
@@ -127,8 +127,8 @@ NANO_IMAGE_RESIZE = None
 # та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
 USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
 
-SAHI_SLICE_WIDTH = 576                   # ширина фрагменту (px)
-SAHI_SLICE_HEIGHT = 576                  # висота фрагменту (px)
+SAHI_SLICE_WIDTH = 704                   # ширина фрагменту (px)
+SAHI_SLICE_HEIGHT = 704                  # висота фрагменту (px)
 SAHI_OVERLAP_WIDTH_RATIO = 0.2            # перекриття по ширині (0.0–1.0)
 SAHI_OVERLAP_HEIGHT_RATIO = 0.2           # перекриття по висоті (0.0–1.0)
 SAHI_PERFORM_STANDARD_PRED = True         # додатково запустити детекцію на повному кадрі
@@ -159,6 +159,105 @@ VIS_LABEL_BG_ALPHA = 0.8       # прозорість фону мітки (0–1
 VIS_BBOX_THICKNESS = 3         # товщина основної рамки
 VIS_BBOX_INNER_THICKNESS = 1   # товщина внутрішнього «підсвіту»
 MASK_ALPHA = 0.0               # напівпрозорий overlay всередині боксу (0 = вимкнено)
+
+
+# =============================================================================
+# TensorRT INFERENCE WRAPPER
+# =============================================================================
+
+class TRTInferenceModel:
+    """
+    Обгортка для TensorRT .engine файлу, сумісна з інтерфейсом rfdetr
+    (model.__call__, model.postprocess).
+    """
+
+    def __init__(self, engine_path: str, device: torch.device = None):
+        import tensorrt as trt
+
+        self.device = device or _get_device()
+        self.logger = trt.Logger(trt.Logger.WARNING)
+        self.runtime = trt.Runtime(self.logger)
+
+        with open(engine_path, 'rb') as f:
+            self.engine = self.runtime.deserialize_cuda_engine(f.read())
+
+        self.context = self.engine.create_execution_context()
+
+        self.input_name = None
+        self.output_names = []
+        self.output_shapes = {}
+        self.output_dtypes = {}
+
+        for i in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(i)
+            mode = self.engine.get_tensor_mode(name)
+            if mode == trt.TensorIOMode.INPUT:
+                self.input_name = name
+                self.input_shape = self.engine.get_tensor_shape(name)
+            else:
+                self.output_names.append(name)
+                self.output_shapes[name] = self.engine.get_tensor_shape(name)
+                dtype = self.engine.get_tensor_dtype(name)
+                self.output_dtypes[name] = trt.nptype(dtype)
+
+        self._trt_output_to_key = {'dets': 'pred_boxes', 'labels': 'pred_logits'}
+        self.model = self
+
+        self._stream = torch.cuda.Stream(device=self.device)
+
+        self._output_buffers = {}
+        for name in self.output_names:
+            shape = list(self.output_shapes[name])
+            dtype_np = self.output_dtypes[name]
+            dtype_torch = torch.float32 if dtype_np == np.float32 else torch.float16
+            buf = torch.empty(shape, dtype=dtype_torch, device=self.device).contiguous()
+            self._output_buffers[name] = buf
+            self.context.set_tensor_address(name, buf.data_ptr())
+
+    def __call__(self, images: torch.Tensor) -> dict:
+        expected_h, expected_w = self.input_shape[2], self.input_shape[3]
+        if images.shape[2] != expected_h or images.shape[3] != expected_w:
+            raise ValueError(
+                f"TRT engine очікує вхід {expected_h}x{expected_w}, "
+                f"але отримано {images.shape[2]}x{images.shape[3]}. "
+                f"Перевірте imgsz / MODEL_SIZE."
+            )
+
+        d_input = images.float().to(self.device).contiguous()
+        self.context.set_tensor_address(self.input_name, d_input.data_ptr())
+
+        self.context.execute_async_v3(self._stream.cuda_stream)
+        self._stream.synchronize()
+
+        result = {}
+        for name, buf in self._output_buffers.items():
+            key = self._trt_output_to_key.get(name, name)
+            result[key] = buf.clone()
+        return result
+
+    def postprocess(self, outputs: dict, target_sizes: torch.Tensor) -> list:
+        from rfdetr.util import box_ops
+
+        out_logits = outputs['pred_logits']
+        out_bbox = outputs['pred_boxes']
+        num_select = min(300, out_logits.shape[1] * out_logits.shape[2])
+
+        prob = out_logits.float().sigmoid()
+        topk_values, topk_indexes = torch.topk(
+            prob.view(out_logits.shape[0], -1), num_select, dim=1
+        )
+        scores = topk_values
+        topk_boxes = topk_indexes // out_logits.shape[2]
+        labels = topk_indexes % out_logits.shape[2]
+        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox.float())
+        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1, 1, 4))
+
+        img_h, img_w = target_sizes.unbind(1)
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
+        boxes = boxes * scale_fct[:, None, :]
+
+        return [{'scores': s, 'labels': l, 'boxes': b}
+                for s, l, b in zip(scores, labels, boxes)]
 
 
 # =============================================================================
@@ -199,11 +298,37 @@ def _detect_imgsz_from_checkpoint(checkpoint: dict, model_size: str) -> int:
     return size_to_resolution.get(model_size, 576)
 
 
+def load_trt_model(model_path: str, model_size: str, num_classes: int = None, class_names: dict = None):
+    """Завантаження TensorRT engine (.engine). Повертає (wrapper, num_classes, class_names, imgsz)."""
+    size_to_resolution = {"n": 384, "s": 512, "m": 576, "b": 560, "l": 704, "xl": 700, "2xl": 880}
+    imgsz = size_to_resolution.get(model_size, 576)
+    num_classes = num_classes or 80
+    out_names = class_names or CLASS_NAMES
+
+    trt_model = TRTInferenceModel(str(model_path))
+    trt_model.inference_model = None
+
+    class _TRTWrapper:
+        """Мімікрія rfdetr інтерфейсу для сумісності з _run_detection_standard."""
+        pass
+
+    wrapper = _TRTWrapper()
+    wrapper.model = trt_model
+    wrapper._is_optimized_for_inference = False
+
+    return wrapper, num_classes, out_names, imgsz
+
+
 def load_rfdetr_model(model_path: str, model_size: str, num_classes: int = None, class_names: dict = None):
-    """Завантаження RF-DETR з checkpoint (.pth). Повертає (rfdetr, num_classes, class_names, imgsz)."""
+    """Завантаження RF-DETR. Автодетект формату: .engine → TRT, .pth/.pt → PyTorch."""
+    model_path_str = str(model_path)
+
+    if model_path_str.endswith('.engine'):
+        return load_trt_model(model_path_str, model_size, num_classes, class_names)
+
     from rfdetr.detr import RFDETRNano, RFDETRSmall, RFDETRMedium, RFDETRBase, RFDETRLarge
 
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(model_path_str, map_location="cpu", weights_only=False)
     num_classes = num_classes or checkpoint.get("num_classes") or 80
     if class_names is None and "class_names" in checkpoint:
         class_names = checkpoint["class_names"]
@@ -224,7 +349,7 @@ def load_rfdetr_model(model_path: str, model_size: str, num_classes: int = None,
         except Exception:
             pass
     model_cls = size_map.get(model_size, RFDETRMedium)
-    rfdetr = model_cls(pretrain_weights=model_path, num_classes=num_classes)
+    rfdetr = model_cls(pretrain_weights=model_path_str, num_classes=num_classes)
     rfdetr.model.device = _get_device()
     rfdetr.model.model = rfdetr.model.model.to(rfdetr.model.device)
     rfdetr.model.model.eval()
@@ -864,11 +989,12 @@ def run_tracking(
     conf_threshold = cfg.get("conf_threshold", 0.25)
     max_det = cfg.get("max_det", 300)
     classes_filter = cfg.get("classes")
-    dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+    warmup_sz = imgsz if isinstance(rfdetr.model, TRTInferenceModel) else 64
+    dummy = np.zeros((warmup_sz, warmup_sz, 3), dtype=np.uint8)
     if benchmark_stats is not None:
         _benchmark_sync()
         t0 = time.perf_counter()
-    run_detection(rfdetr, dummy, 64, 64, imgsz=64, conf_threshold=conf_threshold, max_det=max_det, classes_filter=None)
+    run_detection(rfdetr, dummy, warmup_sz, warmup_sz, imgsz=warmup_sz, conf_threshold=conf_threshold, max_det=max_det, classes_filter=None)
     if benchmark_stats is not None:
         _benchmark_sync()
         benchmark_stats.warmup_time = time.perf_counter() - t0
@@ -985,7 +1111,7 @@ def run_tracking(
             else:
                 tracker_frame = frame
 
-            is_det_frame = (frame_counter % detection_interval == 1 or frame_counter == 1)
+            is_det_frame = (detection_interval <= 1 or frame_counter == 1 or frame_counter % detection_interval == 1)
             num_detections = 0
             t_detect = 0.0
 
