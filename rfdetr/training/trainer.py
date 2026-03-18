@@ -16,6 +16,7 @@ import time
 import datetime
 import argparse
 import warnings
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -847,80 +848,36 @@ class RFDETRTrainer:
         self.training_logger.info("Saving first training batches with augmentations...")
         
         try:
-            import json
-            from PIL import Image, ImageDraw
-            
-            mean = np.array([0.485, 0.456, 0.406])
-            std = np.array([0.229, 0.224, 0.225])
-            batch_size = self.training_config.batch_size
-            
-            all_batches_aug_logs = []  # Collect augmentation logs for all batches
+            all_batches_aug_logs = []
             num_vis_batches = self.training_config.vis_batches
             
-            for batch_idx in range(num_vis_batches):
-                images_list = []
-                batch_aug_logs = []  # Collect augmentation logs for this batch
-                
-                for i in range(batch_size):
-                    idx = batch_idx * batch_size + i
-                    if idx >= len(self.train_dataset):
-                        break
-                    
-                    # Get image with augmentations
-                    img_tensor, target, aug_log = self.train_dataset[idx]
-                    
-                    # Collect augmentation log for this image
+            for batch_idx, batch_data in enumerate(self.train_loader):
+                if batch_idx >= num_vis_batches:
+                    break
+
+                images, targets, aug_logs = batch_data
+                filenames = []
+                batch_aug_logs = []
+                for image_idx, aug_log in enumerate(aug_logs):
+                    image_name = None
                     if aug_log:
+                        image_name = aug_log.get('image_name')
                         batch_aug_logs.append({
-                            'grid_position': i,
-                            'image_name': aug_log.get('image_name', f'image_{idx}'),
-                            'augmentations': aug_log.get('applied', [])
+                            'grid_position': image_idx,
+                            'image_name': image_name or f'image_{batch_idx}_{image_idx}',
+                            'augmentations': aug_log.get('applied', []),
                         })
-                    
-                    # Denormalize
-                    img_np = img_tensor.numpy().transpose(1, 2, 0)
-                    img_np = img_np * std + mean
-                    img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
-                    
-                    # Draw boxes
-                    img_pil = Image.fromarray(img_np)
-                    draw = ImageDraw.Draw(img_pil)
-                    h, w = img_np.shape[:2]
-                    
-                    boxes = target['boxes']
-                    labels = target['labels']
-                    
-                    colors = [(255, 56, 56), (72, 249, 10), (0, 194, 255), (255, 178, 29),
-                              (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0)]
-                    
-                    for box, label in zip(boxes, labels):
-                        cx, cy, bw, bh = box.tolist()
-                        x1 = int((cx - bw/2) * w)
-                        y1 = int((cy - bh/2) * h)
-                        x2 = int((cx + bw/2) * w)
-                        y2 = int((cy + bh/2) * h)
-                        
-                        label_id = label.item()
-                        color = colors[label_id % len(colors)]
-                        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-                        
-                        class_name = self.class_names[label_id] if label_id < len(self.class_names) else str(label_id)
-                        draw.text((x1, max(0, y1-12)), class_name, fill=color)
-                    
-                    images_list.append(np.array(img_pil))
-                
-                if not images_list:
-                    continue
-                
-                # Create mosaic with dynamic grid size
-                mosaic = self._create_mosaic(images_list, grid_size=self.grid_size)
-                
-                # Save visualization
-                save_path = self.save_dir / f'train_batch{batch_idx}.jpg'
-                Image.fromarray(mosaic).save(save_path, quality=95)
-                self.training_logger.info(f"Saved {save_path}")
-                
-                # Collect batch aug logs
+                    filenames.append(image_name or f'image_{batch_idx}_{image_idx}')
+
+                save_path = self.batch_visualizer.save_train_batch(
+                    images,
+                    targets,
+                    batch_idx=batch_idx,
+                    filenames=filenames,
+                )
+                if save_path is not None:
+                    self.training_logger.info(f"Saved {save_path}")
+
                 if batch_aug_logs:
                     all_batches_aug_logs.append({
                         'batch_idx': batch_idx,
@@ -963,73 +920,43 @@ class RFDETRTrainer:
         self.training_logger.info("Saving last training batches...")
         
         try:
-            import json
-            from PIL import Image, ImageDraw
-            
-            mean = np.array([0.485, 0.456, 0.406])
-            std = np.array([0.229, 0.224, 0.225])
-            batch_size = self.training_config.batch_size
-            
-            total_images = len(self.train_dataset)
             num_vis_batches = self.training_config.vis_batches
-            start_idx = max(0, total_images - batch_size * num_vis_batches)
-            
-            all_batches_aug_logs = []  # Collect augmentation logs for all last batches
-            
-            for batch_idx in range(num_vis_batches):
-                images_list = []
-                batch_aug_logs = []  # Collect augmentation logs for this batch
-                
-                for i in range(batch_size):
-                    idx = start_idx + batch_idx * batch_size + i
-                    if idx >= total_images:
-                        break
-                    
-                    img_tensor, target, aug_log = self.train_dataset[idx]
-                    
-                    # Collect augmentation log for this image
+            all_batches_aug_logs = []
+            last_batches = deque(maxlen=num_vis_batches)
+
+            for batch_idx, batch_data in enumerate(self.train_loader):
+                last_batches.append((batch_idx, batch_data))
+
+            for batch_idx, batch_data in last_batches:
+                images, targets, aug_logs = batch_data
+                batch_name = self.current_epoch * len(self.train_loader) + batch_idx
+                filenames = []
+                batch_aug_logs = []
+                for image_idx, aug_log in enumerate(aug_logs):
+                    image_name = None
                     if aug_log:
+                        image_name = aug_log.get('image_name')
                         batch_aug_logs.append({
-                            'grid_position': i,
-                            'image_name': aug_log.get('image_name', f'image_{idx}'),
-                            'augmentations': aug_log.get('applied', [])
+                            'grid_position': image_idx,
+                            'image_name': image_name or f'image_{batch_name}_{image_idx}',
+                            'augmentations': aug_log.get('applied', []),
                         })
-                    
-                    img_np = img_tensor.numpy().transpose(1, 2, 0)
-                    img_np = img_np * std + mean
-                    img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
-                    
-                    img_pil = Image.fromarray(img_np)
-                    draw = ImageDraw.Draw(img_pil)
-                    h, w = img_np.shape[:2]
-                    
-                    boxes = target['boxes']
-                    labels = target['labels']
-                    colors = [(255, 56, 56), (72, 249, 10), (0, 194, 255), (255, 178, 29)]
-                    
-                    for box, label in zip(boxes, labels):
-                        cx, cy, bw, bh = box.tolist()
-                        x1, y1 = int((cx - bw/2) * w), int((cy - bh/2) * h)
-                        x2, y2 = int((cx + bw/2) * w), int((cy + bh/2) * h)
-                        color = colors[label.item() % len(colors)]
-                        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
-                    
-                    images_list.append(np.array(img_pil))
-                
-                if images_list:
-                    mosaic = self._create_mosaic(images_list, grid_size=self.grid_size)
-                    batch_name = (self.current_epoch * len(self.train_loader) + batch_idx)
-                    save_path = self.save_dir / f'train_batch{batch_name}.jpg'
-                    Image.fromarray(mosaic).save(save_path, quality=95)
-                    
-                    # Collect batch aug logs
-                    if batch_aug_logs:
-                        all_batches_aug_logs.append({
-                            'batch_idx': batch_name,
-                            'batch_file': f'train_batch{batch_name}.jpg',
-                            'grid_size': self.grid_size,
-                            'images': batch_aug_logs
-                        })
+                    filenames.append(image_name or f'image_{batch_name}_{image_idx}')
+
+                save_path = self.batch_visualizer.save_train_batch(
+                    images,
+                    targets,
+                    batch_idx=batch_name,
+                    filenames=filenames,
+                    is_last=True,
+                )
+                if save_path is not None and batch_aug_logs:
+                    all_batches_aug_logs.append({
+                        'batch_idx': batch_name,
+                        'batch_file': f'train_batch{batch_name}.jpg',
+                        'grid_size': self.grid_size,
+                        'images': batch_aug_logs
+                    })
             
             # Append to existing augmentation log file
             if all_batches_aug_logs:
