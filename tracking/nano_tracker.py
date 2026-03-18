@@ -62,8 +62,8 @@ def _nms_detections(detections: List[dict], iou_threshold: float = 0.5) -> List[
 
 def _create_cv_nano_tracker(backbone_path: str, neckhead_path: str):
     params = cv.TrackerNano_Params()
-    params.backbone = backbone_path
-    params.neckhead = neckhead_path
+    params.backbone = str(backbone_path)
+    params.neckhead = str(neckhead_path)
     return cv.TrackerNano_create(params)
 
 

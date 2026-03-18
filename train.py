@@ -44,7 +44,7 @@ PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для заван�
 # КОНФІГУРАЦІЯ МОДЕЛІ
 # =============================================================================
 MODEL_CONFIG = ModelConfig(
-    model_size="l",                 # 'n','s','m','b','l','xl','2xl' | Рекомендовано: 'b' або 'l'
+    model_size="m",                 # 'n','s','m','b','l','xl','2xl' | Рекомендовано: 'b' або 'l'
     # num_classes — автоматично визначається з COCO JSON анотацій датасету.
     # Вказане значення ігнорується при тренуванні.
     pretrained_weights=PRETRAINED_WEIGHTS,  # Шлях .pt або None (авто-завантаження з HuggingFace)
@@ -71,7 +71,7 @@ TRAINING_CONFIG = TrainingConfig(
     # Основні параметри навчання
     # -------------------------------------------------------------------------
     epochs=100,                       # [≥1] Кількість епох | Рекомендовано: 50–300 (fine-tune: 20–100)
-    batch_size=8,                    # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 4–32
+    batch_size=4,                    # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 4–32
     
     # -------------------------------------------------------------------------
     # Оптимізатор (AdamW)
@@ -83,12 +83,12 @@ TRAINING_CONFIG = TrainingConfig(
     # Learning rate scheduler
     # -------------------------------------------------------------------------
     scheduler="cosine",              # ['cosine','step','linear'] | Рекомендовано: 'cosine'
-    warmup_epochs=3,                 # [≥0] Warmup епох | Рекомендовано: 1–10 | 0=без warmup
+    warmup_epochs=5,                 # [≥0] Warmup епох | Рекомендовано: 1–10 | 0=без warmup
     
     # -------------------------------------------------------------------------
     # Градієнти
     # -------------------------------------------------------------------------
-    gradient_accumulation=1,         # [≥1] Ефективний batch = batch_size × accumulation | Рекомендовано: 1–8
+    gradient_accumulation=4,         # [≥1] Ефективний batch = batch_size × accumulation | Рекомендовано: 1–8
     grad_clip=0.1,                   # [≥0] Макс. норма градієнта | 0=вимкнено | Рекомендовано: 0.05–0.5
     
     # -------------------------------------------------------------------------
@@ -96,18 +96,18 @@ TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
     val_period=1,                    # [≥1] Валідація кожні N епох | Рекомендовано: 1–5
     save_period=-1,                  # [≥1 або -1] Checkpoint кожні N епох | -1=тільки best/last
-    early_stopping=10,               # [≥0] Зупинка якщо mAP не росте N епох | 0=вимкнено | Рекомендовано: 10–50
+    early_stopping=30,               # [≥0] Зупинка якщо mAP не росте N епох | 0=вимкнено | Рекомендовано: 10–50
     
     # -------------------------------------------------------------------------
     # Візуалізації
     # -------------------------------------------------------------------------
-    vis_batches=10,                  # [≥0] Батчів для візуалізації (train/val) | 0=вимкнено
+    vis_batches=30,                  # [≥0] Батчів для візуалізації (train/val) | 0=вимкнено
     
     # -------------------------------------------------------------------------
     # Device та workers
     # -------------------------------------------------------------------------
     device="cuda",                   # ['cuda','cpu','cuda:0','cuda:1'] | Рекомендовано: 'cuda'
-    workers=2,                       # [≥0] DataLoader workers | 0=основний потік (Windows) | Рекомендовано: 2–8
+    workers=4,                       # [≥0] DataLoader workers | 0=основний потік (Windows) | Рекомендовано: 2–8
 )
 
 
@@ -118,24 +118,73 @@ TRAINING_CONFIG = TrainingConfig(
 # =============================================================================
 import albumentations as A
 ALBUMENTATION_CONFIG = [
-    A.Blur(blur_limit=5, p=0.2),
-    A.GaussNoise(var_limit=(10.0, 40.0), p=0.35),
-    A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.6),
-    A.RandomBrightnessContrast(brightness_limit=0.4, contrast_limit=0.4, p=0.65),
-    A.HueSaturationValue(hue_shift_limit=0, sat_shift_limit=5, val_shift_limit=35, p=0.4),
     A.HorizontalFlip(p=0.5),
-    A.VerticalFlip(p=0.2),
-    A.CoarseDropout(num_holes=6, max_h_size=20, max_w_size=20, fill_value=128, p=0.35),
-    A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.2, rotate_limit=5, p=0.4),
+
+    A.OneOf([
+        A.AtLeastOneBBoxRandomCrop(
+            height=576,
+            width=576,
+            erosion_factor=0.2,
+            p=0.35,
+        ),
+        A.RandomCropNearBBox(
+            max_part_shift=(0.05, 0.2),
+            p=0.45,
+        ),
+        A.RandomSizedCrop(
+            min_max_height=(384, 512),
+            size=(576, 576),
+            w2h_ratio=1.0,
+            p=0.20,
+        ),
+    ], p=0.25),
+
+    A.Affine(
+        scale=(0.95, 1.08),
+        translate_percent=(0.0, 0.03),
+        rotate=(-4, 4),
+        shear=(-2, 2),
+        p=0.20
+    ),
+
+    A.CLAHE(
+        clip_limit=(1, 3),
+        tile_grid_size=(8, 8),
+        p=0.20
+    ),
+
+    A.RandomBrightnessContrast(
+        brightness_limit=0.10,
+        contrast_limit=0.12,
+        p=0.25
+    ),
+
+    A.OneOf([
+        A.GaussianBlur(blur_limit=(3, 5), p=1.0),
+        A.MotionBlur(blur_limit=(3, 5), p=1.0),
+        A.MedianBlur(blur_limit=3, p=1.0),
+    ], p=0.10),
+
+    A.GaussNoise(
+        std_range=(0.02, 0.05),
+        p=0.08
+    ),
+
+    A.CoarseDropout(
+        num_holes_range=(1, 3),
+        hole_height_range=(0.01, 0.03),
+        hole_width_range=(0.01, 0.03),
+        p=0.06
+    ),
 ]
 
 # =============================================================================
 # КОНФІГУРАЦІЯ АУГМЕНТАЦІЙ (пайплайн + imgsz + albu список)
 # =============================================================================
 AUGMENTATION_CONFIG = AugmentationConfig(
-    imgsz=MODEL_RESOLUTIONS.get(MODEL_CONFIG.model_size, 560),
+    imgsz=MODEL_RESOLUTIONS.get(MODEL_CONFIG.model_size, 576),
     mosaic=0.0,
-    close_mosaic=5,
+    close_mosaic=0,
     mixup=0.0,
     cutmix=0.0,
     mosaic_scale=(0.5, 1.5),
