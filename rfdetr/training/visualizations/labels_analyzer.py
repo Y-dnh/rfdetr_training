@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from tqdm import tqdm
 
 
 def analyze_labels(
@@ -236,7 +237,8 @@ def create_labels_visualization(
     else:
         sample_indices = list(range(n_samples))
 
-    for i in sample_indices:
+    progress_desc = "Creating labels.jpg"
+    for i in tqdm(sample_indices, desc=progress_desc, total=len(sample_indices)):
         try:
             # Try to get raw item if available
             if hasattr(dataset, 'get_raw_item'):
