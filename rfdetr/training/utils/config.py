@@ -145,6 +145,7 @@ class TrainingConfig:
     
     # --- Візуалізації ---
     vis_batches: int = 3              # Діапазон: ≥0 | Кількість батчів для візуалізації | 0=вимкнено
+    labels_max_images: int = 0        # Діапазон: ≥0 | Кількість зображень для labels.jpg | 0=весь train split
     
     def __post_init__(self):
         """Validate configuration values."""
@@ -164,6 +165,8 @@ class TrainingConfig:
             raise ValueError(f"gradient_accumulation must be > 0, got {self.gradient_accumulation}")
         if self.workers < 0:
             raise ValueError(f"workers must be >= 0, got {self.workers}")
+        if self.labels_max_images < 0:
+            raise ValueError(f"labels_max_images must be >= 0, got {self.labels_max_images}")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary."""
@@ -187,6 +190,7 @@ class TrainingConfig:
             'name': self.name,
             'exist_ok': self.exist_ok,
             'vis_batches': self.vis_batches,
+            'labels_max_images': self.labels_max_images,
         }
     
     @classmethod

@@ -203,8 +203,9 @@ def plot_labels(
 def create_labels_visualization(
     dataset,
     save_path: Union[str, Path],
-    max_images: int = 1000,
+    max_images: Optional[int] = None,
     class_names: Optional[List[str]] = None,
+    random_seed: int = 42,
 ) -> None:
     """
     Create labels visualization from a dataset.
@@ -212,16 +213,30 @@ def create_labels_visualization(
     Args:
         dataset: Dataset object with __getitem__ returning (image, target).
         save_path: Path to save labels.jpg.
-        max_images: Maximum number of images to analyze.
+        max_images: Maximum number of images to analyze. ``None`` means use the
+                    full dataset. If smaller than the dataset, images are sampled
+                    uniformly at random across the full split.
         class_names: Optional class names.
+        random_seed: Seed for reproducible dataset sampling.
     """
     boxes_list = []
     labels_list = []
     sizes_list = []
     
-    n_samples = min(len(dataset), max_images)
-    
-    for i in range(n_samples):
+    total_images = len(dataset)
+    n_samples = total_images if max_images is None else min(total_images, max_images)
+    if n_samples == 0:
+        analysis = analyze_labels(boxes_list, labels_list, sizes_list, class_names)
+        plot_labels(analysis, save_path, class_names)
+        return analysis
+
+    if n_samples < total_images:
+        rng = np.random.default_rng(random_seed)
+        sample_indices = rng.choice(total_images, size=n_samples, replace=False).tolist()
+    else:
+        sample_indices = list(range(n_samples))
+
+    for i in sample_indices:
         try:
             # Try to get raw item if available
             if hasattr(dataset, 'get_raw_item'):

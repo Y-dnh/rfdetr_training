@@ -453,10 +453,17 @@ class RFDETRTrainer:
         
         # Create labels.jpg
         self.training_logger.info("Creating labels visualization...")
+        labels_max_images = (
+            None
+            if self.training_config.labels_max_images == 0
+            else self.training_config.labels_max_images
+        )
         create_labels_visualization(
             self.train_dataset,
             self.save_dir / 'labels.jpg',
+            max_images=labels_max_images,
             class_names=self.class_names,
+            random_seed=self.seed,
         )
         
         # Setup model and criterion
@@ -465,7 +472,11 @@ class RFDETRTrainer:
         self.training_logger.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
         
         # Setup optimizer and scheduler
-        num_training_steps = len(self.train_loader) * self.training_config.epochs
+        steps_per_epoch = max(
+            1,
+            math.ceil(len(self.train_loader) / self.training_config.gradient_accumulation),
+        )
+        num_training_steps = steps_per_epoch * self.training_config.epochs
         self.optimizer = self._setup_optimizer()
         self.scheduler = self._setup_scheduler(self.optimizer, num_training_steps)
         self.scaler = GradScaler('cuda', enabled=False)
@@ -583,6 +594,8 @@ class RFDETRTrainer:
         # Header for progress bar
         print(("%10s" * 7) % ("Epoch", "GPU_mem", "box_loss", "cls_loss", "dfl_loss", "Instances", "Size"))
         pbar = tqdm(self.train_loader, total=num_batches, bar_format='{desc} {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        accumulation_steps = max(1, self.training_config.gradient_accumulation)
+        self.optimizer.zero_grad(set_to_none=True)
         
         for batch_idx, batch_data in enumerate(pbar):
             images, targets, aug_logs = batch_data
@@ -607,25 +620,28 @@ class RFDETRTrainer:
             samples = NestedTensor(images, mask)
             
             # Forward pass
-            self.optimizer.zero_grad()
             outputs = self.model(samples, targets)
             loss_dict = self.criterion(outputs, targets)
             
             # Compute total loss
             weight_dict = self.criterion.weight_dict
             losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+            scaled_losses = losses / accumulation_steps
             
             # Backward pass
-            self.scaler.scale(losses).backward()
+            self.scaler.scale(scaled_losses).backward()
             
-            # Gradient clipping
-            if self.training_config.grad_clip > 0:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.training_config.grad_clip)
-            
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            self.scheduler.step()
+            should_step = ((batch_idx + 1) % accumulation_steps == 0) or (batch_idx + 1 == num_batches)
+            if should_step:
+                # Gradient clipping
+                if self.training_config.grad_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.training_config.grad_clip)
+                
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad(set_to_none=True)
+                self.scheduler.step()
             
             # Accumulate losses
             total_loss += losses.item()
