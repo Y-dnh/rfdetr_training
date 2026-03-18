@@ -129,6 +129,29 @@ class RFDETRTrainer:
         
         # Grid size for visualizations
         self.grid_size = get_grid_size(self.training_config.batch_size)
+        self._original_showwarning = warnings.showwarning
+
+    def _configure_warning_routing(self) -> None:
+        """Route noisy runtime warnings to the log file without breaking tqdm."""
+        if self.training_logger is None:
+            return
+
+        def _showwarning(message, category, filename, lineno, file=None, line=None):
+            message_text = str(message)
+            warning_location = f"{Path(filename).name}:{lineno}"
+
+            if (
+                issubclass(category, RuntimeWarning)
+                and "invalid value encountered in divide" in message_text
+            ):
+                self.training_logger.debug(
+                    f"{category.__name__}: {message_text} ({warning_location})"
+                )
+                return
+
+            self._original_showwarning(message, category, filename, lineno, file=file, line=line)
+
+        warnings.showwarning = _showwarning
     
     def _setup_output_dir(self) -> Path:
         """Set up output directory: project/<name>/ (e.g. runs/yolov8s/baseline/) — Ultralytics-style."""
@@ -411,6 +434,7 @@ class RFDETRTrainer:
         self.training_logger = TrainingLogger(self.save_dir)
         self.metrics_logger = MetricsLogger(self.save_dir)
         self.aug_logger = AugmentationLogger(self.save_dir)
+        self._configure_warning_routing()
         
         # Suppress torch.meshgrid warning
         warnings.filterwarnings("ignore", message="torch.meshgrid: in an upcoming release")
@@ -695,9 +719,18 @@ class RFDETRTrainer:
         base_ds = get_coco_api_from_dataset(self.val_dataset)
         coco_evaluator = CocoEvaluator(base_ds, ['bbox'])
         
-        # Save batches
+        # Save preview batches using a random subset of validation batches so the
+        # visualization is not dominated by neighboring frames from the same scene.
         saved_batches = 0
         max_batches_to_save = self.training_config.vis_batches
+        num_preview_batches = min(max_batches_to_save, num_batches)
+        preview_batch_indices: set[int] = set()
+        if num_preview_batches > 0:
+            preview_seed = self.seed + self.current_epoch + (100000 if save_last else 0)
+            preview_rng = np.random.default_rng(preview_seed)
+            preview_batch_indices = set(
+                preview_rng.choice(num_batches, size=num_preview_batches, replace=False).tolist()
+            )
         
         # Get image size from first batch
         img_size = self.augmentation_config.imgsz if self.augmentation_config else 640
@@ -786,8 +819,8 @@ class RFDETRTrainer:
                 res = {target['image_id'].item(): output for target, output in zip(targets, results)}
                 coco_evaluator.update(res)
                 
-                # Save val batch visualizations (first batches for first epoch, last for final)
-                if saved_batches < max_batches_to_save:
+                # Save a random subset of validation batches for visualization.
+                if batch_idx in preview_batch_indices:
                     prefix = "last_val" if save_last else "val"
                     # Pass raw model outputs for visualization (normalized cxcywh format)
                     self._save_val_batch(images, targets, outputs, batch_idx, prefix)
