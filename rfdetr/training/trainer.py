@@ -444,7 +444,11 @@ class RFDETRTrainer:
         self.training_logger.info(f"Classes: {num_classes} - {self.class_names}")
         
         # Setup batch visualizer
-        self.batch_visualizer = BatchVisualizer(self.save_dir, class_names=self.class_names)
+        self.batch_visualizer = BatchVisualizer(
+            self.save_dir,
+            class_names=self.class_names,
+            max_batches=self.training_config.vis_batches,
+        )
         self.confusion_matrix = ConfusionMatrix(num_classes, self.class_names)
         
         # Create labels.jpg
@@ -1427,16 +1431,50 @@ class RFDETRTrainer:
     
     def _save_configs(self) -> None:
         """Save configuration files."""
+        augmentation_config = self.augmentation_config.to_dict()
+        albumentation_transforms = getattr(self.augmentation_config, "albumentation_transforms", None)
+        if albumentation_transforms is not None:
+            augmentation_config["albumentation_transforms"] = self._serialize_albumentation_transforms(
+                albumentation_transforms
+            )
+
         configs = {
             'model': self.model_config.to_dict(),
             'training': self.training_config.to_dict(),
-            'augmentation': self.augmentation_config.to_dict(),
+            'augmentation': augmentation_config,
             'export': self.export_config.to_dict(),
             'seed': self.seed,
         }
         
         with open(self.save_dir / 'config.json', 'w') as f:
-            json.dump(configs, f, indent=2)
+            json.dump(configs, f, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _serialize_albumentation_transforms(transforms: List[Any]) -> List[Any]:
+        """Convert albumentations transforms into JSON-serializable dictionaries."""
+        serialized: List[Any] = []
+        for transform in transforms:
+            resolved = transform
+            if getattr(transform, "__class__", None) and type(transform).__name__ == "function":
+                try:
+                    resolved = transform()
+                except Exception:
+                    serialized.append({"factory": getattr(transform, "__name__", "anonymous_factory")})
+                    continue
+
+            if resolved is None:
+                serialized.append(None)
+                continue
+
+            if hasattr(resolved, "to_dict_private"):
+                try:
+                    serialized.append(resolved.to_dict_private())
+                    continue
+                except Exception:
+                    pass
+
+            serialized.append(repr(resolved))
+        return serialized
     
     def _export_onnx(self) -> Optional[str]:
         """Export best model to ONNX format using rfdetr.deploy.export module."""

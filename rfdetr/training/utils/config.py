@@ -186,6 +186,7 @@ class TrainingConfig:
             'project': self.project,
             'name': self.name,
             'exist_ok': self.exist_ok,
+            'vis_batches': self.vis_batches,
         }
     
     @classmethod
