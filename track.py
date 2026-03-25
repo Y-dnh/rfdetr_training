@@ -37,7 +37,7 @@ from tracking import NanoTracker, TrackedObject
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
-PROJECT_NAME = "rfdetr_medium"
+PROJECT_NAME = "rfdetr_dpsu_v8"
 EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
 RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
@@ -125,7 +125,7 @@ NANO_IMAGE_RESIZE = None
 # =============================================================================
 # Розбиває зображення на перекриваючі фрагменти, запускає детекцію на кожному,
 # та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
-USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
+USE_SAHI = False                          # True = увімкнути SAHI, False = звичайна детекція
 
 SAHI_SLICE_WIDTH = 576                    # ширина фрагменту (px)
 SAHI_SLICE_HEIGHT = 576                   # висота фрагменту (px)
@@ -882,10 +882,13 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
     rfdetr, num_classes, class_names, imgsz = load_rfdetr_model(model_path, MODEL_SIZE, class_names=CLASS_NAMES)
     if benchmark_stats is not None: benchmark_stats.model_load_time = time.perf_counter() - t0
 
+    print(f"\n[INFO] Модель: {Path(model_path).name}")
+    print(f"[INFO] Вхідний розмір: {imgsz}x{imgsz}")
+    
     cfg = INFERENCE_CONFIG.copy()
-    conf_threshold = getattr(cfg, "conf_threshold", 0.25)
-    max_det = getattr(cfg, "max_det", 300)
-    classes_filter = getattr(cfg, "classes", None)
+    conf_threshold = cfg.get("conf_threshold", 0.25)
+    max_det = cfg.get("max_det", 300)
+    classes_filter = cfg.get("classes", None)
     
     is_trt = type(getattr(rfdetr, "model", None)).__name__ == "TRTInferenceModel"
     warmup_sz = imgsz if (getattr(rfdetr.model, "inference_model", None) is not None or is_trt) else 64
@@ -900,12 +903,20 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
         if device.type == "cuda": gpu_name = torch.cuda.get_device_name(device.index); device_name = f"CUDA:{device.index} ({gpu_name})"
     except Exception:
         device_name = "TensorRT (GPU)"
+    print(f"[INFO] Пристрій: {device_name}")
 
     cap = cv2.VideoCapture(video_input_path)
     if not cap.isOpened(): return None
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)); height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)); total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+
+    if USE_SAHI:
+        slices = _sahi_generate_slices(width, height, SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT, SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO)
+        print(f"[INFO] Відео: {width}x{height} | SAHI: ON | Розмір слайса: {SAHI_SLICE_WIDTH}x{SAHI_SLICE_HEIGHT} | Оверлап: {SAHI_OVERLAP_WIDTH_RATIO} | Слайсів: {len(slices)}")
+    else:
+        print(f"[INFO] Відео: {width}x{height} | SAHI: OFF")
+    
     frames_to_process = min(total_frames, BENCHMARK_MAX_FRAMES) if (benchmark_mode and BENCHMARK_MAX_FRAMES) else total_frames
     
     writer = None

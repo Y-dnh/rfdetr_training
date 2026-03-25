@@ -857,9 +857,32 @@ class RFDETRTrainer:
         ar_small = float(stats[9]) if len(stats) > 9 else 0.0
         ar_medium = float(stats[10]) if len(stats) > 10 else 0.0
         ar_large = float(stats[11]) if len(stats) > 11 else 0.0
-        precision = mAP50
-        recall = ar_maxdet100
-        f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+        # Extract real Precision and Recall from COCO eval's precision-recall curve
+        # eval['precision'] shape: [T, R, K, A, M]
+        #   T=10 IoU thresholds (0.5:0.05:0.95), R=101 recall thresholds (0:0.01:1),
+        #   K=num_categories, A=4 area ranges, M=3 maxDets settings
+        # We use IoU=0.5 (idx 0), area=all (idx 0), maxDets=100 (idx 2)
+        coco_eval_obj = coco_evaluator.coco_eval['bbox']
+        try:
+            prec_array = coco_eval_obj.eval['precision']  # [T, R, K, A, M]
+            prec_at_50 = prec_array[0, :, :, 0, 2]  # [101, K] precision at IoU=0.5
+            # Replace -1 (no prediction) with 0
+            prec_at_50 = prec_at_50.copy()
+            prec_at_50[prec_at_50 < 0] = 0
+            mean_prec = prec_at_50.mean(axis=1)  # [101] averaged across categories
+            recall_thresholds = np.linspace(0, 1, 101)
+            # Find optimal operating point (max F1)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                f1_curve = 2 * mean_prec * recall_thresholds / (mean_prec + recall_thresholds)
+            f1_curve = np.nan_to_num(f1_curve)
+            best_idx = int(np.argmax(f1_curve))
+            precision = float(mean_prec[best_idx])
+            recall = float(recall_thresholds[best_idx])
+            f1 = float(f1_curve[best_idx])
+        except Exception:
+            precision = mAP50
+            recall = ar_maxdet100
+            f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
         # Print final metrics (same format as progress bar description, no header - already printed)
         mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
