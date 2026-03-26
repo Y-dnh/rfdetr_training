@@ -52,6 +52,7 @@ dependencies = [
     "roboflow",
     "pillow-avif-plugin<1.5.3", # TODO: # Temporary pin. pillow-avif-plugin 1.5.3 fails to install in CI due to a broken wheel. Remove once the upstream issue is fixed.
     "albumentations>=1.0.3",
+    "fiftyone",
 ]
 
 [project.optional-dependencies]
