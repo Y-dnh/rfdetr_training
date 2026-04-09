@@ -496,8 +496,8 @@ class RFDETRValidator:
                     images.cpu(), targets, predictions, batch_idx, filenames
                 )
             
-            # Save per-image analysis visualizations
-            if save_visualizations and analysis_visualizer is not None:
+            # Save per-image analysis visualizations (обмежуємо першими 3 батчами, як і групові)
+            if save_visualizations and analysis_visualizer is not None and batch_idx < 3:
                 for i, (img, target, pred) in enumerate(zip(images, targets, predictions)):
                     idx = batch_idx * self.batch_size + i
                     filename = dataset.get_filename(idx) if hasattr(dataset, 'get_filename') else None

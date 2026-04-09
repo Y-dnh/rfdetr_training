@@ -27,11 +27,11 @@ from rfdetr.training import (
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 SEED = 42
-PROJECT_NAME = "rfdetr_large"
+PROJECT_NAME = "rfdetr_medium_overfit"
 BASE_DIR = Path(__file__).parent
 RUNS_DIR = BASE_DIR / "runs"
-# У WSL задай: export RFDETR_DATASET_ROOT=/mnt/d/dataset_for_training
-DATASET_ROOT = os.environ.get("RFDETR_DATASET_ROOT", "D:/dataset_for_training")
+# У WSL задай: export RFDETR_DATASET_ROOT=/mnt/d/datasets_for_training
+DATASET_ROOT = os.environ.get("RFDETR_DATASET_ROOT", "D:/datasets_for_training/dpsu")
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 # Датасет (COCO JSON): DATASET_ROOT містить train/, valid/, annotations/ тощо
 DATASET_DIR = Path(DATASET_ROOT)
@@ -71,7 +71,7 @@ TRAINING_CONFIG = TrainingConfig(
     # Основні параметри навчання
     # -------------------------------------------------------------------------
     epochs=100,                       # [≥1] Кількість епох | Рекомендовано: 50–300 (fine-tune: 20–100)
-    batch_size=4,                    # [≥1] Розмір батчу | Залежить від GPU VRAM | Рекомендовано: 4–32
+    batch_size=8,                    # [≥1] Розмір батчу (8 якщо вистачає VRAM)
     
     # -------------------------------------------------------------------------
     # Оптимізатор (AdamW)
@@ -122,23 +122,40 @@ ALBUMENTATION_CONFIG = [
     A.HorizontalFlip(p=0.5),
 
     A.OneOf([
+        # 1. Симуляція SAHI 720 -> 576 (математичне стиснення)
+        A.RandomSizedCrop(
+            min_max_height=(640, 800),
+            size=(576, 576),
+            w2h_ratio=1.0,
+            p=0.30,
+        ),
+        # 2. Симуляція SAHI 576 -> 576 (без стиснення, якщо інференс 576)
         A.AtLeastOneBBoxRandomCrop(
             height=576,
             width=576,
             erosion_factor=0.2,
-            p=0.35,
+            p=0.15,
         ),
-        A.RandomCropNearBBox(
-            max_part_shift=(0.05, 0.2),
-            p=0.45,
+        # 3. Вирізання 720x720 з гарантією попадання об'єкта
+        A.AtLeastOneBBoxRandomCrop(
+            height=720,
+            width=720,
+            erosion_factor=0.2,
+            p=0.15,
         ),
+        # 4. Класичний зум з менших розмірів (як було у вашому коді)
         A.RandomSizedCrop(
             min_max_height=(384, 512),
             size=(576, 576),
             w2h_ratio=1.0,
-            p=0.20,
+            p=0.30,
         ),
-    ], p=0.25),
+        # 5. Мікро-зум біля машини (для крайових випадків нарізки вікон)
+        A.RandomCropNearBBox(
+            max_part_shift=(0.05, 0.2),
+            p=0.10,
+        ),
+    ], p=0.40),
 
     A.Affine(
         scale=(0.95, 1.08),
@@ -151,31 +168,38 @@ ALBUMENTATION_CONFIG = [
     A.CLAHE(
         clip_limit=(1, 3),
         tile_grid_size=(8, 8),
-        p=0.20
+        p=0.40  # Посилено для імітації туману/диму
     ),
 
     A.RandomBrightnessContrast(
-        brightness_limit=0.10,
-        contrast_limit=0.12,
-        p=0.25
+        brightness_limit=0.20,
+        contrast_limit=0.20,
+        p=0.50  # Посилено для роботи в тінях/на сонці
+    ),
+    
+    A.HueSaturationValue(
+        hue_shift_limit=10, 
+        sat_shift_limit=20, 
+        val_shift_limit=10, 
+        p=0.30  # Додано для імітації різного часу доби
     ),
 
     A.OneOf([
         A.GaussianBlur(blur_limit=(3, 5), p=1.0),
         A.MotionBlur(blur_limit=(3, 5), p=1.0),
         A.MedianBlur(blur_limit=3, p=1.0),
-    ], p=0.10),
+    ], p=0.15),
 
     A.GaussNoise(
         std_range=(0.02, 0.05),
-        p=0.08
+        p=0.10
     ),
 
     A.CoarseDropout(
-        num_holes_range=(1, 3),
-        hole_height_range=(0.01, 0.03),
-        hole_width_range=(0.01, 0.03),
-        p=0.06
+        num_holes_range=(1, 5),          # Більше маленьких і середніх дірок
+        hole_height_range=(0.05, 0.10),  # 5-10% висоти (симулює часткове перекриття)
+        hole_width_range=(0.05, 0.10),   # 5-10% ширини
+        p=0.10                           # Значно підвищено ймовірність
     ),
 ]
 

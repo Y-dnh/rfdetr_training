@@ -28,7 +28,7 @@ from rfdetr.training import ExportConfig
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style).
-PROJECT_NAME = "rfdetr_large"
+PROJECT_NAME = "rfdetr_dpsu_v8"
 EXPERIMENT_NAME = "baseline"          # Експеримент тренування, звідки брати модель
 BASE_DIR = Path(__file__).parent
 RUNS_DIR = BASE_DIR / "runs"
@@ -47,7 +47,7 @@ EXPORT_CONFIG = ExportConfig(
     # Основні налаштування
     # -------------------------------------------------------------------------
     enabled=True,                     # [True/False] Виконати експорт
-    format='both',                    # ['onnx','tensorrt','both'] | Рекомендовано: 'onnx'
+    format='tensorrt',                    # ['onnx','tensorrt','both'] | Рекомендовано: 'onnx'
 
     # -------------------------------------------------------------------------
     # ONNX налаштування

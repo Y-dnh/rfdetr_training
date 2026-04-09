@@ -37,19 +37,19 @@ from tracking import NanoTracker, TrackedObject
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
-PROJECT_NAME = "rfdetr_dpsu_v8"
+PROJECT_NAME = "rfdetr_large"
 EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
 RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
 MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "inference_model.sim.engine"
-MODEL_SIZE = "m"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+MODEL_SIZE = "l"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
 # MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # Вхідне відео або папка з відео для трекінгу.
 # Якщо вказана папка — опрацьовуються всі відеофайли у ній (рекурсивно не шукаємо).
 # Вихід: tracked_videos/<назва_моделі>/<ім'я_відео>_tracked.mp4 та .txt з логами.
-VIDEO_INPUT_PATH = "D:/work/diff_stuff/test_videos/dpsu"
+VIDEO_INPUT_PATH = "D:\\videos_for_test\\zir"
 
 # Benchmark: True = профайлінг (заміри по фазах, звіт _benchmark.txt)
 BENCHMARK_MODE = True
@@ -125,14 +125,14 @@ NANO_IMAGE_RESIZE = None
 # =============================================================================
 # Розбиває зображення на перекриваючі фрагменти, запускає детекцію на кожному,
 # та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
-USE_SAHI = False                          # True = увімкнути SAHI, False = звичайна детекція
+USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
 
-SAHI_SLICE_WIDTH = 576                    # ширина фрагменту (px)
-SAHI_SLICE_HEIGHT = 576                   # висота фрагменту (px)
-SAHI_OVERLAP_WIDTH_RATIO = 0.3            # перекриття по ширині (0.0–1.0)
-SAHI_OVERLAP_HEIGHT_RATIO = 0.3           # перекриття по висоті (0.0–1.0)
-SAHI_PERFORM_STANDARD_PRED = False         # додатково запустити детекцію на повному кадрі
-SAHI_POSTPROCESS_TYPE = "NMS"             # "NMS" або "NMM" (Non-Maximum Merging)
+SAHI_SLICE_WIDTH = 1080                  # ширина фрагменту (px)
+SAHI_SLICE_HEIGHT = 1080                 # висота фрагменту (px)
+SAHI_OVERLAP_WIDTH_RATIO = 0.1           # перекриття по ширині (0.0–1.0)
+SAHI_OVERLAP_HEIGHT_RATIO = 0.1          # перекриття по висоті (0.0–1.0)
+SAHI_PERFORM_STANDARD_PRED = False       # додатково запустити детекцію на повному кадрі
+SAHI_POSTPROCESS_TYPE = "NMS"            # "NMS" або "NMM" (Non-Maximum Merging)
 SAHI_POSTPROCESS_MATCH_METRIC = "IOU"     # "IOU" або "IOS" (Intersection over Smaller)
 SAHI_POSTPROCESS_MATCH_THRESHOLD = 0.5    # поріг IoU/IoS для злиття дублікатів між фрагментами
 SAHI_POSTPROCESS_CLASS_AGNOSTIC = False   # True = злиття без урахування класу
@@ -1000,7 +1000,6 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
                 if benchmark_stats: t_write = time.perf_counter() - t_write_s
             else: t_write = 0.0 if benchmark_stats else 0
             if benchmark_stats: benchmark_stats.add_frame(t_read, t_detect, t_track, t_draw, t_write, is_det_frame, num_detections, num_tracks)
-    except Exception as e: print(f"Помилка: {e}")
     finally:
         pbar.close(); cap.release()
         if writer: writer.release()
@@ -1009,9 +1008,8 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
     fps_processed = frame_counter / elapsed_sec if elapsed_sec > 0 else 0.0
 
     coco_path = os.path.join(output_dir, f"{video_stem}_annotations_coco.json")
-    try:
-        with open(coco_path, "w", encoding="utf-8") as f: json.dump(coco_data, f, ensure_ascii=False, indent=2)
-    except Exception: pass
+    with open(coco_path, "w", encoding="utf-8") as f:
+        json.dump(coco_data, f, ensure_ascii=False, indent=2)
     
     return {
         "output_path": output_path if writer else None,
@@ -1133,18 +1131,16 @@ def main():
             lines = f.readlines()
             config_lines = lines[35:161]
         with open(os.path.join(output_dir, "config.txt"), "w", encoding="utf-8") as f: f.writelines(config_lines)
-    except Exception: pass
+    except: pass
 
     results = []
-    if path.is_dir():
-        video_paths = collect_videos_from_folder(input_path)
-        if not video_paths: return
-        for i, video_path in enumerate(video_paths, 1):
-            print(f"\n[{i}/{len(video_paths)}] Обробка: {Path(video_path).name}")
-            out = run_tracking(video_path, model_path=MODEL_PATH, output_base_dir=output_dir, detection_interval=DETECTION_INTERVAL, benchmark_mode=BENCHMARK_MODE)
-            if out: results.append(out)
-    else:
-        out = run_tracking(input_path, model_path=MODEL_PATH, output_base_dir=output_dir, detection_interval=DETECTION_INTERVAL, benchmark_mode=BENCHMARK_MODE)
+    videos = collect_videos_from_folder(input_path) if path.is_dir() else [input_path]
+    if not videos:
+        raise FileNotFoundError(f"Вказане джерело відео не знайдено або порожнє: {input_path}")
+    
+    for i, video_path in enumerate(videos, 1):
+        print(f"\n[{i}/{len(videos)}] Обробка: {Path(video_path).name}")
+        out = run_tracking(video_path, model_path=MODEL_PATH, output_base_dir=output_dir, detection_interval=DETECTION_INTERVAL, benchmark_mode=BENCHMARK_MODE)
         if out: results.append(out)
             
     if results: _generate_global_reports(results, output_dir)
