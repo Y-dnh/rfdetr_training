@@ -265,17 +265,18 @@ class ModelConfig:
 @dataclass
 class ExportConfig:
     """
-    Configuration for model export (ONNX, TensorRT).
+    Configuration for model export (ONNX, TensorRT, OpenVINO).
     
     Attributes:
         enabled: Whether to export model after training.
-        format: Export format ('onnx', 'tensorrt', 'both').
+        format: Export format ('onnx', 'tensorrt', 'both', 'openvino').
         simplify: Simplify ONNX model using onnxsim.
         opset_version: ONNX opset version.
         dynamic_batch: Enable dynamic batch size.
         half: Export model in FP16 (half precision).
         batch_size: Batch size for export (static batch).
         verbose: Verbose ONNX export.
+        ov_compress_to_fp16: Compress OpenVINO IR weights to FP16.
     """
     enabled: bool = True               # True=експортувати після тренування | False=пропустити
     format: str = 'onnx'              # Варіанти: 'onnx', 'tensorrt', 'both' | Рекомендовано: 'onnx'
@@ -286,13 +287,15 @@ class ExportConfig:
     batch_size: int = 1               # Діапазон: ≥1 | Batch size при інференсі (ігнорується якщо dynamic_batch=True)
     verbose: bool = False             # True=детальний ONNX export лог | False=тихий режим
     
+    ov_compress_to_fp16: bool = True  # True=Compress OpenVINO IR floating-point weights to FP16 | False=Keep FP32
+
     # --- TensorRT (trtexec) ---
     trt_profile: bool = False         # True=nsys профілювання при TensorRT конвертації
     trt_dry_run: bool = False         # True=показати trtexec команду без виконання
     
     def __post_init__(self):
         """Validate configuration values."""
-        valid_formats = ['onnx', 'tensorrt', 'both']
+        valid_formats = ['onnx', 'tensorrt', 'both', 'openvino']
         if self.format not in valid_formats:
             raise ValueError(f"format must be one of {valid_formats}, got {self.format}")
         if self.opset_version < 11:
@@ -311,6 +314,7 @@ class ExportConfig:
             'half': self.half,
             'batch_size': self.batch_size,
             'verbose': self.verbose,
+            'ov_compress_to_fp16': self.ov_compress_to_fp16,
             'trt_profile': self.trt_profile,
             'trt_dry_run': self.trt_dry_run,
         }

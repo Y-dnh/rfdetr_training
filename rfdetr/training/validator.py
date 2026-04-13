@@ -362,17 +362,18 @@ class RFDETRValidator:
                 # OR retrieve 'orig_size' from targets if available. 
                 # RF-DETR postprocess needs target_sizes to scale boxes back to original image
                 
-                # Use current inference image size for postprocessing to match visualization coordinate system
-                # This ensures predictions are in the same scale as the validation image tensor (e.g. 576x576)
-                # matching the normalized GT boxes which AnalysisVisualizer scales to this size.
-                target_sizes = torch.tensor([images.shape[-2:]] * batch_size, device=device)
-
                 # Handle tuple output from inference model (boxes, logits)
                 if isinstance(outputs, tuple):
                     outputs = {
                         'pred_boxes': outputs[0],
                         'pred_logits': outputs[1]
                     }
+
+                # Use current inference image size for postprocessing to match visualization coordinate system.
+                # Build target_sizes on the same device as model outputs to support runtime wrappers
+                # that always return CPU tensors, such as OpenVINO.
+                output_device = outputs['pred_boxes'].device
+                target_sizes = torch.tensor([images.shape[-2:]] * batch_size, device=output_device)
 
                 results = self.rfdetr.model.postprocess(outputs, target_sizes=target_sizes)
 

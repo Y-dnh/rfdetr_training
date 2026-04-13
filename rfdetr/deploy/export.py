@@ -14,6 +14,7 @@ import os
 import random
 import re
 import subprocess
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import onnx
@@ -24,6 +25,7 @@ from PIL import Image
 
 import rfdetr.datasets.transforms as T
 import rfdetr.util.misc as utils
+from rfdetr.deploy.openvino import OpenVINOExportMetadata, export_openvino_ir
 from rfdetr.models import build_model
 
 
@@ -298,6 +300,72 @@ def export_from_checkpoint(
     del export_model
     
     return output_file
+
+
+def export_artifacts_from_checkpoint(
+    model: nn.Module,
+    checkpoint_path: str,
+    output_dir: str,
+    resolution: int = 640,
+    batch_size: int = 1,
+    simplify: bool = True,
+    opset_version: int = 17,
+    dynamic_batch: bool = False,
+    verbose: bool = False,
+    export_format: str = "onnx",
+    class_names: Optional[Sequence[str]] = None,
+    num_select: int = 300,
+    ov_compress_to_fp16: bool = True,
+) -> Dict[str, Optional[str]]:
+    """
+    Export deployment artifacts from a training checkpoint.
+
+    Returns:
+        Dictionary with exported artifact paths. `onnx_path` is always populated when
+        export succeeds because OpenVINO IR is generated from ONNX.
+    """
+    onnx_path = export_from_checkpoint(
+        model=model,
+        checkpoint_path=checkpoint_path,
+        output_dir=output_dir,
+        resolution=resolution,
+        batch_size=batch_size,
+        simplify=simplify,
+        opset_version=opset_version,
+        dynamic_batch=dynamic_batch,
+        verbose=verbose,
+    )
+
+    artifacts: Dict[str, Optional[str]] = {
+        "onnx_path": onnx_path,
+        "openvino_path": None,
+        "openvino_bin_path": None,
+        "openvino_metadata_path": None,
+    }
+
+    if export_format == "openvino":
+        metadata = OpenVINOExportMetadata(
+            backend="openvino",
+            resolution=resolution,
+            batch_size=batch_size,
+            class_names=list(class_names or []),
+            num_select=num_select,
+            input_name="input",
+            output_names=["dets", "labels"],
+            source_checkpoint=str(checkpoint_path),
+            compress_to_fp16=ov_compress_to_fp16,
+        )
+        openvino_artifacts = export_openvino_ir(
+            onnx_path=onnx_path,
+            output_dir=output_dir,
+            metadata=metadata,
+            compress_to_fp16=ov_compress_to_fp16,
+        )
+        artifacts["openvino_path"] = openvino_artifacts["xml_path"]
+        artifacts["openvino_bin_path"] = openvino_artifacts["bin_path"]
+        artifacts["openvino_metadata_path"] = openvino_artifacts["metadata_path"]
+
+    return artifacts
 
 
 def main(args):

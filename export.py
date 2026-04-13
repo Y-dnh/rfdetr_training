@@ -21,6 +21,7 @@ from typing import Dict, Any, Optional, Tuple
 
 import torch
 
+from rfdetr.deploy.openvino import OpenVINOExportMetadata, export_openvino_ir
 from rfdetr.training import ExportConfig
 
 
@@ -35,7 +36,7 @@ RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
-CHECKPOINT_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pt"
+CHECKPOINT_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "best.pth"
 OUTPUT_DIR = None                     # None = поруч з checkpoint
 
 
@@ -47,7 +48,7 @@ EXPORT_CONFIG = ExportConfig(
     # Основні налаштування
     # -------------------------------------------------------------------------
     enabled=True,                     # [True/False] Виконати експорт
-    format='tensorrt',                    # ['onnx','tensorrt','both'] | Рекомендовано: 'onnx'
+    format='openvino',                    # ['onnx','tensorrt','both','openvino'] | Рекомендовано: 'onnx'
 
     # -------------------------------------------------------------------------
     # ONNX налаштування
@@ -61,6 +62,7 @@ EXPORT_CONFIG = ExportConfig(
     dynamic_batch=False,              # [True/False] Динамічний batch при інференсі | False=фіксований
     batch_size=1,                     # [≥1] Batch size (ігнорується якщо dynamic_batch=True)
     half=True,                        # [True/False] FP16 (TensorRT) | False=FP32
+    ov_compress_to_fp16=True,         # [True/False] Стиснути float-ваги OpenVINO IR до FP16
 
     # -------------------------------------------------------------------------
     # Інше
@@ -319,9 +321,15 @@ def main():
     export_format = EXPORT_CONFIG.format
     do_onnx = export_format in ('onnx', 'both')
     do_trt = export_format in ('tensorrt', 'both')
+    do_openvino = export_format == 'openvino'
 
-    format_label = {'onnx': 'ONNX', 'tensorrt': 'TensorRT', 'both': 'ONNX + TensorRT'}
-    total_steps = 2 + int(do_onnx or do_trt) + int(do_trt)
+    format_label = {
+        'onnx': 'ONNX',
+        'tensorrt': 'TensorRT',
+        'both': 'ONNX + TensorRT',
+        'openvino': 'ONNX + OpenVINO',
+    }
+    total_steps = 2 + int(do_onnx or do_trt or do_openvino) + int(do_trt) + int(do_openvino)
 
     # ---- Banner ----
     print("\n" + "=" * 70)
@@ -379,9 +387,10 @@ def main():
 
     onnx_path: Optional[str] = None
     engine_path: Optional[str] = None
+    openvino_artifacts: Optional[Dict[str, str]] = None
 
     # ---- 3. ONNX Export ----
-    if do_onnx or do_trt:
+    if do_onnx or do_trt or do_openvino:
         step += 1
         print(f"\n[{step}/{total_steps}] Експорт в ONNX...")
         print(f"  Output:   {output_dir}")
@@ -425,6 +434,33 @@ def main():
             verbose=EXPORT_CONFIG.verbose,
         )
 
+    if do_openvino and onnx_path and openvino_artifacts is None:
+        step += 1
+        print(f"\n[{step}/{total_steps}] OpenVINO IR export...")
+        print(f"  Source:          {onnx_path}")
+        print(f"  Compress FP16:   {EXPORT_CONFIG.ov_compress_to_fp16}")
+
+        ov_output_dir = os.path.join(output_dir, "openvino")
+        os.makedirs(ov_output_dir, exist_ok=True)
+
+        ov_metadata = OpenVINOExportMetadata(
+            backend='openvino',
+            resolution=resolution,
+            batch_size=EXPORT_CONFIG.batch_size,
+            class_names=list(metadata.get('class_names') or []),
+            num_select=int(getattr(detector.model.postprocess, 'num_select', 300)),
+            input_name=input_names[0],
+            output_names=list(output_names),
+            source_checkpoint=checkpoint_path,
+            compress_to_fp16=EXPORT_CONFIG.ov_compress_to_fp16,
+        )
+        openvino_artifacts = export_openvino_ir(
+            onnx_path=onnx_path,
+            output_dir=ov_output_dir,
+            metadata=ov_metadata,
+            compress_to_fp16=EXPORT_CONFIG.ov_compress_to_fp16,
+        )
+
     # ---- Результат ----
     print("\n" + "=" * 70)
     print("[OK] ЕКСПОРТ ЗАВЕРШЕНО")
@@ -444,11 +480,20 @@ def main():
         size_mb = os.path.getsize(engine_path) / (1024 * 1024)
         print(f"  Engine:    {engine_path}  ({size_mb:.1f} MB)")
 
+    if openvino_artifacts and os.path.exists(openvino_artifacts['xml_path']):
+        xml_size_mb = os.path.getsize(openvino_artifacts['xml_path']) / (1024 * 1024)
+        bin_size_mb = os.path.getsize(openvino_artifacts['bin_path']) / (1024 * 1024)
+        print(f"  OpenVINO:  {openvino_artifacts['xml_path']}  ({xml_size_mb:.1f} MB)")
+        print(f"  Bin:       {openvino_artifacts['bin_path']}  ({bin_size_mb:.1f} MB)")
+        print(f"  Metadata:  {openvino_artifacts['metadata_path']}")
+
     if not do_onnx and do_trt:
         print("  (ONNX збережено як проміжний артефакт для TensorRT)")
 
     print("=" * 70 + "\n")
 
+    if openvino_artifacts:
+        return openvino_artifacts['xml_path']
     return onnx_path or engine_path
 
 

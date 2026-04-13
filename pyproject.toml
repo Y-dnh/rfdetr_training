@@ -62,6 +62,13 @@ export = [
     "onnx_graphsurgeon",
     "onnxruntime",
 ]
+export-openvino = [
+    "onnx",
+    "onnxsim",
+    "onnx_graphsurgeon",
+    "onnxruntime",
+    "openvino",
+]
 export-gpu = [
     "onnx",
     "onnxsim",

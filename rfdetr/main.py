@@ -562,11 +562,33 @@ class Model:
         for callback in callbacks["on_train_end"]:
             callback()
 
-    def export(self, output_dir="output", infer_dir=None, simplify=False,  backbone_only=False, opset_version=17, verbose=True, force=False, shape=None, batch_size=1, **kwargs):
-        """Export the trained model to ONNX format"""
-        print("Exporting model to ONNX format")
+    def export(
+        self,
+        output_dir="output",
+        infer_dir=None,
+        simplify=False,
+        backbone_only=False,
+        opset_version=17,
+        verbose=True,
+        force=False,
+        shape=None,
+        batch_size=1,
+        format="onnx",
+        ov_compress_to_fp16=True,
+        **kwargs,
+    ):
+        """Export the trained model to ONNX or OpenVINO format."""
+        if format not in {"onnx", "openvino"}:
+            raise ValueError(f"Unsupported export format: {format}")
+        if format == "openvino" and backbone_only:
+            raise ValueError("OpenVINO export supports only the detection graph in v1.")
+        if format == "openvino" and self.args.segmentation_head:
+            raise ValueError("OpenVINO export for segmentation models is not supported in v1.")
+
+        print(f"Exporting model to {format.upper()} format")
         try:
             from rfdetr.deploy.export import export_onnx, make_infer_image, onnx_simplify
+            from rfdetr.deploy.openvino import OpenVINOExportMetadata, export_openvino_ir
         except ImportError:
             print("It seems some dependencies for ONNX export are missing. Please run `pip install rfdetr[onnxexport]` and try again.")
             raise
@@ -623,16 +645,39 @@ class Model:
         print(f"Successfully exported ONNX model to: {output_file}")
 
         if simplify:
-            sim_output_file = onnx_simplify(
+            output_file = onnx_simplify(
                 onnx_dir=output_file,
                 input_names=input_names,
                 input_tensors=input_tensors,
                 force=force
             )
-            print(f"Successfully simplified ONNX model to: {sim_output_file}")
+            print(f"Successfully simplified ONNX model to: {output_file}")
 
-        print("ONNX export completed successfully")
+        if format == "openvino":
+            class_names = getattr(self, "class_names", None) or getattr(self.args, "class_names", None) or []
+            metadata = OpenVINOExportMetadata(
+                backend="openvino",
+                resolution=int(shape[0]),
+                batch_size=batch_size,
+                class_names=list(class_names),
+                num_select=int(getattr(self.postprocess, "num_select", 300)),
+                input_name=input_names[0],
+                output_names=list(output_names),
+                source_checkpoint=getattr(self.args, "pretrain_weights", None),
+                compress_to_fp16=ov_compress_to_fp16,
+            )
+            openvino_artifacts = export_openvino_ir(
+                onnx_path=output_file,
+                output_dir=output_dir,
+                metadata=metadata,
+                compress_to_fp16=ov_compress_to_fp16,
+            )
+            output_file = openvino_artifacts["xml_path"]
+            print(f"Successfully exported OpenVINO model to: {output_file}")
+
+        print(f"{format.upper()} export completed successfully")
         self.model = self.model.to(device)
+        return output_file
 
 
 if __name__ == '__main__':

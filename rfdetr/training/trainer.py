@@ -591,16 +591,23 @@ class RFDETRTrainer:
         # Generate final visualizations
         self._generate_final_visualizations()
         
-        # Export ONNX if enabled
-        onnx_path = None
+        # Export deployment artifacts if enabled
+        export_artifacts: Dict[str, Optional[str]] = {
+            'onnx_path': None,
+            'openvino_path': None,
+            'openvino_bin_path': None,
+            'openvino_metadata_path': None,
+        }
         if self.export_config.enabled:
-            onnx_path = self._export_onnx()
-        
+            export_artifacts = self._export_model_artifacts()
+
         return {
             'save_dir': str(self.save_dir),
             'best_map': self.best_map,
             'epochs_trained': self.current_epoch + 1,
-            'onnx_path': onnx_path,
+            'onnx_path': export_artifacts.get('onnx_path'),
+            'openvino_path': export_artifacts.get('openvino_path'),
+            'export_artifacts': export_artifacts,
         }
     
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
@@ -1548,29 +1555,35 @@ class RFDETRTrainer:
             serialized.append(repr(resolved))
         return serialized
     
-    def _export_onnx(self) -> Optional[str]:
-        """Export best model to ONNX format using rfdetr.deploy.export module."""
+    def _export_model_artifacts(self) -> Dict[str, Optional[str]]:
+        """Export deployment artifacts configured for this training run."""
+        artifacts: Dict[str, Optional[str]] = {
+            'onnx_path': None,
+            'openvino_path': None,
+            'openvino_bin_path': None,
+            'openvino_metadata_path': None,
+        }
+
         try:
-            from rfdetr.deploy.export import export_from_checkpoint
-            
-            self.training_logger.info("Exporting best model to ONNX...")
-            
-            # Get resolution from model config
+            from rfdetr.deploy.export import export_artifacts_from_checkpoint
+
+            export_format = self.export_config.format
+            self.training_logger.info(f"Exporting deployment artifacts ({export_format})...")
+
             model_resolutions = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
             resolution = model_resolutions.get(self.model_config.model_size, 640)
-            
-            # Find checkpoint
+
             best_path = self.save_dir / 'weights' / 'best.pt'
             if not best_path.exists():
                 self.training_logger.warning("Best checkpoint not found, using last checkpoint")
                 best_path = self.save_dir / 'weights' / 'last.pt'
-            
+
             if not best_path.exists():
-                self.training_logger.error("No checkpoint found for ONNX export")
-                return None
-            
-            # Export using module function
-            output_file = export_from_checkpoint(
+                self.training_logger.error("No checkpoint found for artifact export")
+                return artifacts
+
+            num_select = int(getattr(self.postprocessor, 'num_select', 300))
+            artifacts = export_artifacts_from_checkpoint(
                 model=self.model,
                 checkpoint_path=str(best_path),
                 output_dir=str(self.save_dir / 'weights'),
@@ -1580,16 +1593,28 @@ class RFDETRTrainer:
                 opset_version=self.export_config.opset_version,
                 dynamic_batch=self.export_config.dynamic_batch,
                 verbose=self.export_config.verbose,
+                export_format=export_format,
+                class_names=self.class_names,
+                num_select=num_select,
+                ov_compress_to_fp16=self.export_config.ov_compress_to_fp16,
             )
-            
-            self.training_logger.info(f"ONNX model exported to: {output_file}")
-            return output_file
-            
+
+            if artifacts.get('onnx_path'):
+                self.training_logger.info(f"ONNX model exported to: {artifacts['onnx_path']}")
+            if artifacts.get('openvino_path'):
+                self.training_logger.info(f"OpenVINO model exported to: {artifacts['openvino_path']}")
+
+            return artifacts
+
         except ImportError as e:
-            self.training_logger.warning(f"ONNX export skipped - missing dependencies: {e}")
-            return None
+            self.training_logger.warning(f"Artifact export skipped - missing dependencies: {e}")
+            return artifacts
         except Exception as e:
-            self.training_logger.error(f"ONNX export failed: {e}")
+            self.training_logger.error(f"Artifact export failed: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return artifacts
+
+    def _export_onnx(self) -> Optional[str]:
+        """Backward-compatible helper returning only the exported ONNX path."""
+        return self._export_model_artifacts().get('onnx_path')

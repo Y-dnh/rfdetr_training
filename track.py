@@ -37,31 +37,45 @@ from tracking import NanoTracker, TrackedObject
 # БАЗОВА КОНФІГУРАЦІЯ: ШЛЯХИ
 # =============================================================================
 # Та сама структура, що в train.py та val.py (Ultralytics-style). Модель з runs/.../<experiment>/weights/
-PROJECT_NAME = "rfdetr_large"
+PROJECT_NAME = "rfdetr_dpsu_v8"
 EXPERIMENT_NAME = "baseline"   # Експеримент тренування, звідки брати модель
 RUNS_DIR = BASE_DIR / "runs"
 PROJECT_DIR = RUNS_DIR / PROJECT_NAME
 # Модель: за замовчуванням best.pt з runs/.../<experiment>/weights/
-MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "inference_model.sim.engine"
-MODEL_SIZE = "l"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
+# MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "openvino" / "inference_model.xml"
+MODEL_PATH = PROJECT_DIR / EXPERIMENT_NAME / "weights" / "inference_model.sim.engine"  
+MODEL_SIZE = "m"  # ['n','s','m','b','l','xl','2xl'] — має відповідати checkpoint'у
 # MODEL_RESOLUTIONS = {'n': 384, 's': 512, 'm': 576, 'b': 560, 'l': 704, 'xl': 700, '2xl': 880}
 
 # Вхідне відео або папка з відео для трекінгу.
 # Якщо вказана папка — опрацьовуються всі відеофайли у ній (рекурсивно не шукаємо).
 # Вихід: tracked_videos/<назва_моделі>/<ім'я_відео>_tracked.mp4 та .txt з логами.
-VIDEO_INPUT_PATH = "D:\\videos_for_test\\zir"
+VIDEO_INPUT_PATH = "D:\\work\\diff_stuff\\test_videos\\test_benchmark\\test_benchmark_1280x720\\test4.mp4"
 
 # Benchmark: True = профайлінг (заміри по фазах, звіт _benchmark.txt)
 BENCHMARK_MODE = True
 BENCHMARK_CUDA_SYNC = True
-BENCHMARK_WRITE_VIDEO = True   # False = тільки профайлінг, без запису відео
 BENCHMARK_MAX_FRAMES = None    # None = все відео
+
+# Режим виводу: 'save' = зберегти відео, 'show' = показати на екрані, 'both' = і те і те
+OUTPUT_MODE = "show"           # ['save', 'show', 'both']
+SHOW_WINDOW_NAME = "RF-DETR Tracking"  # Назва вікна при show/both
 
 # Розширення файлів, що вважаються відео (при вказівці папки).
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".wmv", ".flv"}
 
 # Як часто запускати детекцію: модель працює тільки на кадрах 1, 1+N, 1+2N, ...; між ними лише NanoTrack.
 DETECTION_INTERVAL = 10
+
+# =============================================================================
+# ПРИСТРІЙ ДЛЯ ІНФЕРЕНСУ
+# =============================================================================
+# Простий вибір:
+#   "nvidia"  — NVIDIA GPU (CUDA) — для PyTorch та TensorRT моделей
+#   "intel"   — Intel Graphics (iGPU) — тільки для OpenVINO (.xml) моделей
+#   "cpu"     — центральний процесор — працює з будь-якою моделлю
+#   "auto"    — автоматично: NVIDIA якщо є, інакше CPU
+DEVICE = "nvidia"
 
 # =============================================================================
 # ПАРАМЕТРИ ІНФЕРЕНСУ (RF-DETR)
@@ -71,7 +85,6 @@ INFERENCE_CONFIG = {
     "iou_threshold": 0.3,     # IoU поріг для NMS (об'єднання дублікатів боксів)
     "max_det": 300,           # максимум детекцій на один кадр
     "half": True,             # FP16 інференс (швидше на GPU)
-    "device": None,           # None = авто (CUDA якщо є)
     "classes": None,          # фільтр класів (None = усі класи)
 }
 
@@ -127,10 +140,10 @@ NANO_IMAGE_RESIZE = None
 # та об'єднує результати. Ефективно для виявлення дрібних об'єктів у великих кадрах.
 USE_SAHI = True                          # True = увімкнути SAHI, False = звичайна детекція
 
-SAHI_SLICE_WIDTH = 1080                  # ширина фрагменту (px)
-SAHI_SLICE_HEIGHT = 1080                 # висота фрагменту (px)
-SAHI_OVERLAP_WIDTH_RATIO = 0.1           # перекриття по ширині (0.0–1.0)
-SAHI_OVERLAP_HEIGHT_RATIO = 0.1          # перекриття по висоті (0.0–1.0)
+SAHI_SLICE_WIDTH = 576                  # ширина фрагменту (px)
+SAHI_SLICE_HEIGHT = 576                 # висота фрагменту (px)
+SAHI_OVERLAP_WIDTH_RATIO = 0.3           # перекриття по ширині (0.0–1.0)
+SAHI_OVERLAP_HEIGHT_RATIO = 0.3          # перекриття по висоті (0.0–1.0)
 SAHI_PERFORM_STANDARD_PRED = False       # додатково запустити детекцію на повному кадрі
 SAHI_POSTPROCESS_TYPE = "NMS"            # "NMS" або "NMM" (Non-Maximum Merging)
 SAHI_POSTPROCESS_MATCH_METRIC = "IOU"     # "IOU" або "IOS" (Intersection over Smaller)
@@ -279,8 +292,15 @@ def collect_videos_from_folder(folder_path: str) -> list[str]:
 
 
 def _get_device():
-    if INFERENCE_CONFIG.get("device") is not None:
-        return torch.device(INFERENCE_CONFIG["device"])
+    """Повертає torch.device на основі DEVICE."""
+    d = DEVICE.lower().strip()
+    if d == "nvidia":
+        return torch.device("cuda")
+    if d == "intel":
+        return torch.device("cpu")  # OpenVINO працює через свій API, torch тензори — на CPU
+    if d == "cpu":
+        return torch.device("cpu")
+    # auto
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -319,9 +339,45 @@ def load_trt_model(model_path: str, model_size: str, num_classes: int = None, cl
     return wrapper, num_classes, out_names, imgsz
 
 
+def _resolve_openvino_device() -> str:
+    """Повертає OpenVINO device string на основі DEVICE."""
+    d = DEVICE.lower().strip()
+    if d == "intel":
+        return "GPU"   # OpenVINO "GPU" = Intel Graphics (iGPU)
+    if d == "nvidia":
+        return "CPU"   # OpenVINO не підтримує NVIDIA, fallback на CPU
+    if d == "cpu":
+        return "CPU"
+    # auto
+    return "CPU"  # OpenVINO на CPU — найбезпечніший варіант
+
+
+def load_openvino_model(model_path: str, class_names: dict = None):
+    """Завантаження OpenVINO IR моделі (.xml). Повертає (wrapper, num_classes, class_names, imgsz)."""
+    from rfdetr.detr import RFDETR
+
+    ov_device = _resolve_openvino_device()
+    print(f"[INFO] Завантаження OpenVINO моделі через RFDETR.from_openvino...")
+    print(f"[INFO] OpenVINO device: {ov_device}")
+    rfdetr = RFDETR.from_openvino(model_path, device=ov_device)
+
+    imgsz = rfdetr.model.resolution
+    model_class_names = getattr(rfdetr.model, 'class_names', None)
+    if model_class_names:
+        out_names = {i: name for i, name in enumerate(model_class_names)}
+    else:
+        out_names = class_names or CLASS_NAMES
+    num_classes = len(out_names)
+
+    return rfdetr, num_classes, out_names, imgsz
+
+
 def load_rfdetr_model(model_path: str, model_size: str, num_classes: int = None, class_names: dict = None):
-    """Завантаження RF-DETR. Автодетект формату: .engine → TRT, .pth/.pt → PyTorch."""
+    """Завантаження RF-DETR. Автодетект формату: .xml → OpenVINO, .engine → TRT, .pth/.pt → PyTorch."""
     model_path_str = str(model_path)
+
+    if model_path_str.endswith('.xml'):
+        return load_openvino_model(model_path_str, class_names)
 
     if model_path_str.endswith('.engine'):
         return load_trt_model(model_path_str, model_size, num_classes, class_names)
@@ -406,6 +462,7 @@ def _run_detection_standard(rfdetr, frame: np.ndarray, frame_w: int, frame_h: in
         outputs = {"pred_boxes": outputs[0], "pred_logits": outputs[1]}
 
     # Постпроцес у просторі letterbox (imgsz×imgsz) — бокси в пікселях letterbox
+    # target_sizes має бути на тому ж пристрої, що й результат інференсу
     target_sizes = torch.tensor([[imgsz, imgsz]], device=device, dtype=torch.long)
     results = rfdetr.model.postprocess(outputs, target_sizes=target_sizes)
     result = results[0]
@@ -765,6 +822,7 @@ class BenchmarkStats:
         self.tracker_update_times = []
         self.drawing_times = []
         self.frame_write_times = []
+        self.frame_show_times = []
         self.detection_frame_count = 0
         self.tracking_only_frame_count = 0
         self.total_detections = 0
@@ -772,13 +830,14 @@ class BenchmarkStats:
         self.warmup_time = 0.0
         self.model_load_time = 0.0
 
-    def add_frame(self, read_t, detect_t, tracker_t, draw_t, write_t,
+    def add_frame(self, read_t, detect_t, tracker_t, draw_t, write_t, show_t,
                   is_detection_frame, num_detections, num_tracks):
         self.frame_read_times.append(read_t)
         self.detection_times.append(detect_t)
         self.tracker_update_times.append(tracker_t)
         self.drawing_times.append(draw_t)
         self.frame_write_times.append(write_t)
+        self.frame_show_times.append(show_t)
         if is_detection_frame:
             self.detection_frame_count += 1
         else:
@@ -791,10 +850,14 @@ class BenchmarkStats:
         return len(self.frame_read_times)
 
 
-def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, video_path: str, device_name: str, gpu_name: str, width: int, height: int, fps_video: float, total_frames: int, cfg: dict, has_tracker: bool, bitrate_kbps: float = 0, duration_sec: float = 0) -> str:
+def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, video_path: str, device_name: str, gpu_name: str, width: int, height: int, fps_video: float, total_frames: int, cfg: dict, has_tracker: bool, bitrate_kbps: float = 0, duration_sec: float = 0, output_mode: str = "save") -> str:
     n = stats.n
     if n == 0: return "No frames processed.\n"
-    phases = {"Frame Read (I/O)": stats.frame_read_times, "Detection (GPU)": stats.detection_times, "Tracker (CPU)": stats.tracker_update_times, "Drawing (CPU)": stats.drawing_times, "Frame Write (I/O)": stats.frame_write_times}
+    phases = {"Frame Read (I/O)": stats.frame_read_times, "Detection (GPU)": stats.detection_times, "Tracker (CPU)": stats.tracker_update_times, "Drawing (CPU)": stats.drawing_times}
+    if output_mode in ("save", "both"):
+        phases["Frame Write (I/O)"] = stats.frame_write_times
+    if output_mode in ("show", "both"):
+        phases["Frame Show (I/O)"] = stats.frame_show_times
     phase_totals = {name: sum(arr) for name, arr in phases.items()}
     measured_total = sum(phase_totals.values())
     overhead = pipeline_total - measured_total
@@ -814,6 +877,7 @@ def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, vi
         f"  Bitrate:          {bitrate_kbps:.0f} kbps",
         f"  Frames processed: {n} / {total_frames}",
         f"  Detection every:  {DETECTION_INTERVAL} frames",
+        f"  Output mode:      {output_mode}",
         f"  Tracker:          {'NanoTrack v' + NANOTRACK_VERSION if has_tracker else 'None'}",
         f"  Tracker resize:   {f'{NANO_IMAGE_RESIZE}x{NANO_IMAGE_RESIZE}' if NANO_IMAGE_RESIZE else 'OFF (full frame)'}",
         f"  SAHI:             {'ON' if USE_SAHI else 'OFF'}",
@@ -861,15 +925,24 @@ def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, vi
     if track_with_det_times: lines.extend([f"  Tracker on det frames:", f"    Avg: {_fmt_ms(sum(track_with_det_times) / len(track_with_det_times))} ms"])
     if track_only_times: lines.extend([f"  Tracker on non-det frames:", f"    Avg: {_fmt_ms(sum(track_only_times) / len(track_only_times))} ms"])
     if track_total > 0: lines.append(f"  Tracker speed:        {track_avg_ms:.1f} ms/frame  ({track_fps:.0f} frames/s по трекеру)")
-    io_total = phase_totals["Frame Read (I/O)"] + phase_totals["Frame Write (I/O)"]; compute_total = phase_totals["Detection (GPU)"] + phase_totals["Tracker (CPU)"]; compute_fps = n / compute_total if compute_total > 0 else 0
+    # I/O: write + show
+    io_write = phase_totals.get("Frame Write (I/O)", 0)
+    io_show = phase_totals.get("Frame Show (I/O)", 0)
+    io_total = phase_totals["Frame Read (I/O)"] + io_write + io_show
+    compute_total = phase_totals["Detection (GPU)"] + phase_totals["Tracker (CPU)"]; compute_fps = n / compute_total if compute_total > 0 else 0
     lines.extend(["", "-" * 72, "  I/O", "-" * 72, f"  Total I/O time:   {io_total:.3f} s ({_fmt_pct(io_total, pipeline_total)})", "", "-" * 72, "  INITIALIZATION", "-" * 72, f"  Model load:       {_fmt_ms(stats.model_load_time)} ms", f"  Warmup:           {_fmt_ms(stats.warmup_time)} ms", "", "-" * 72, "  SUMMARY", "-" * 72, f"  Effective FPS (pipeline):   {effective_fps:.1f}  (з I/O та малюванням)", f"  Compute FPS (det+track):    {compute_fps:.1f}  (тільки детекція + трекінг, без I/O)", f"  CUDA Sync:                  {BENCHMARK_CUDA_SYNC}", "", "=" * 72])
     return "\n".join(lines)
 
 
-def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_interval: int = DETECTION_INTERVAL, benchmark_mode: bool = False, output_base_dir: str = None) -> dict | None:
+def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_interval: int = DETECTION_INTERVAL, benchmark_mode: bool = False, output_base_dir: str = None, output_mode: str = OUTPUT_MODE) -> dict | None:
     import json
-    if not video_input_path or not os.path.isfile(video_input_path): return None
-    if not os.path.isfile(model_path): return None
+    if not video_input_path or not os.path.isfile(video_input_path):
+        print(f"[ERROR] Відео не знайдено: {video_input_path}")
+        return None
+    if not os.path.isfile(model_path):
+        print(f"[ERROR] Модель не знайдено: {model_path}")
+        print(f"[TIP] Перевірте PROJECT_NAME ({PROJECT_NAME}) та EXPERIMENT_NAME ({EXPERIMENT_NAME})")
+        return None
 
     video_stem = Path(video_input_path).stem
     if output_base_dir is None:
@@ -938,16 +1011,21 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
         print(f"[INFO] Відео: {width}x{height} | SAHI: OFF")
     
     frames_to_process = min(total_frames, BENCHMARK_MAX_FRAMES) if (benchmark_mode and BENCHMARK_MAX_FRAMES) else total_frames
+    do_save = output_mode in ("save", "both")
+    do_show = output_mode in ("show", "both")
     
     writer = None
-    if not benchmark_mode or BENCHMARK_WRITE_VIDEO:
+    if do_save:
         writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         if not writer.isOpened(): cap.release(); return None
 
     tracker = None
     if use_nano:
-        try: tracker = NanoTracker(class_names=class_names, backbone_path=NANOTRACK_BACKBONE, neckhead_path=NANOTRACK_NECKHEAD, max_age=MAX_AGE, min_hits=MIN_HITS, iou_threshold=IOU_THRESHOLD, confirm_threshold=CONFIRM_THRESHOLD, min_sec_stable=MIN_SEC_STABLE, use_optical_flow_predict=USE_OPTICAL_FLOW_PREDICT, optical_flow_threshold=OPTICAL_FLOW_THRESHOLD, adaptive_update=ADAPTIVE_UPDATE, adaptive_threshold=ADAPTIVE_THRESHOLD, enable_reid=ENABLE_REID, reid_buffer_time=REID_BUFFER_TIME, reid_iou_threshold=REID_IOU_THRESHOLD, reid_appearance_threshold=REID_APPEARANCE_THRESHOLD, reid_position_weight=REID_POSITION_WEIGHT, reid_appearance_weight=REID_APPEARANCE_WEIGHT, reid_size_weight=REID_SIZE_WEIGHT, reid_min_track_quality=REID_MIN_TRACK_QUALITY)
-        except Exception: tracker = None
+        try:
+            tracker = NanoTracker(class_names=class_names, backbone_path=NANOTRACK_BACKBONE, neckhead_path=NANOTRACK_NECKHEAD, max_age=MAX_AGE, min_hits=MIN_HITS, iou_threshold=IOU_THRESHOLD, confirm_threshold=CONFIRM_THRESHOLD, min_sec_stable=MIN_SEC_STABLE, use_optical_flow_predict=USE_OPTICAL_FLOW_PREDICT, optical_flow_threshold=OPTICAL_FLOW_THRESHOLD, adaptive_update=ADAPTIVE_UPDATE, adaptive_threshold=ADAPTIVE_THRESHOLD, enable_reid=ENABLE_REID, reid_buffer_time=REID_BUFFER_TIME, reid_iou_threshold=REID_IOU_THRESHOLD, reid_appearance_threshold=REID_APPEARANCE_THRESHOLD, reid_position_weight=REID_POSITION_WEIGHT, reid_appearance_weight=REID_APPEARANCE_WEIGHT, reid_size_weight=REID_SIZE_WEIGHT, reid_min_track_quality=REID_MIN_TRACK_QUALITY)
+        except Exception as e:
+            print(f"[WARNING] Не вдалося ініціалізувати NanoTracker: {e}")
+            tracker = None
 
     frame_counter = 0; last_tracked = []; detection_counts = defaultdict(int); track_durations = {}; track_frames = {}
     coco_data = {"categories": [{"id": k, "name": v} for k, v in class_names.items()], "images": [], "annotations": []}; coco_ann_idx = 1
@@ -1014,15 +1092,24 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
 
             draw_tracks(frame, last_tracked, class_names, CLASS_COLORS)
             if benchmark_stats: t_draw = time.perf_counter() - t_draw_s
-            if writer:
+
+            t_write = 0.0; t_show = 0.0
+            if do_save and writer:
                 if benchmark_stats: t_write_s = time.perf_counter()
                 writer.write(frame)
                 if benchmark_stats: t_write = time.perf_counter() - t_write_s
-            else: t_write = 0.0 if benchmark_stats else 0
-            if benchmark_stats: benchmark_stats.add_frame(t_read, t_detect, t_track, t_draw, t_write, is_det_frame, num_detections, num_tracks)
+            if do_show:
+                if benchmark_stats: t_show_s = time.perf_counter()
+                cv2.imshow(SHOW_WINDOW_NAME, frame)
+                key = cv2.waitKey(1) & 0xFF
+                if benchmark_stats: t_show = time.perf_counter() - t_show_s
+                if key == ord('q') or key == 27:  # q або Esc — вихід
+                    break
+            if benchmark_stats: benchmark_stats.add_frame(t_read, t_detect, t_track, t_draw, t_write, t_show, is_det_frame, num_detections, num_tracks)
     finally:
         pbar.close(); cap.release()
         if writer: writer.release()
+        if do_show: cv2.destroyAllWindows()
 
     elapsed_sec = time.perf_counter() - start_time
     fps_processed = frame_counter / elapsed_sec if elapsed_sec > 0 else 0.0
@@ -1047,12 +1134,13 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
             has_tracker=tracker is not None,
             bitrate_kbps=bitrate_kbps,
             duration_sec=duration_sec,
+            output_mode=output_mode,
         )
         with open(benchmark_log_path, "w", encoding="utf-8") as f:
             f.write(report_txt)
     
     return {
-        "output_path": output_path if writer else None,
+        "output_path": output_path if do_save and writer else None,
         "video_path": video_input_path,
         "video_stem": video_stem,
         "benchmark_stats": benchmark_stats,
@@ -1103,13 +1191,13 @@ def _generate_global_reports(results: list, output_dir: str):
     total_time = sum(r.get('elapsed_sec', 0) for r in results); total_frames = sum(r.get('frames_processed', 0) for r in results)
     global_fps = total_frames / total_time if total_time > 0 else 0
     
-    global_read_times = []; global_det_times = []; global_trk_times = []; global_draw_times = []; global_write_times = []
+    global_read_times = []; global_det_times = []; global_trk_times = []; global_draw_times = []; global_write_times = []; global_show_times = []
     global_det_frames = 0; global_trk_only_frames = 0; global_total_detections = 0; global_tracks_drawn = 0
     
     for r in results:
         bs = r.get("benchmark_stats")
         if bs and bs.n > 0:
-            global_read_times.extend(bs.frame_read_times); global_det_times.extend(bs.detection_times); global_trk_times.extend(bs.tracker_update_times); global_draw_times.extend(bs.drawing_times); global_write_times.extend(bs.frame_write_times)
+            global_read_times.extend(bs.frame_read_times); global_det_times.extend(bs.detection_times); global_trk_times.extend(bs.tracker_update_times); global_draw_times.extend(bs.drawing_times); global_write_times.extend(bs.frame_write_times); global_show_times.extend(bs.frame_show_times)
             global_det_frames += bs.detection_frame_count; global_trk_only_frames += bs.tracking_only_frame_count; global_total_detections += bs.total_detections; global_tracks_drawn += bs.total_tracks_drawn
 
     bench_lines.extend(["\n## Глобальна статистика (по всій папці)", f"- **Оброблено кадрів загалом:** {total_frames}", f"- **Загальний час:** {total_time:.2f} с", f"- **Середній FPS:** {global_fps:.2f} кадрів/с\n"])
@@ -1127,12 +1215,15 @@ def _generate_global_reports(results: list, output_dir: str):
         trk_with_det = [global_trk_times[i] for i in range(global_n) if global_det_times[i] > 0]
         trk_only = [global_trk_times[i] for i in range(global_n) if global_det_times[i] == 0]
         
-        io_total = global_read + global_write; compute_total = global_det + global_trk
+        global_show = sum(global_show_times)
+        io_total = global_read + global_write + global_show; compute_total = global_det + global_trk
         compute_fps = global_n / compute_total if compute_total > 0 else 0
         
         txt = ["```text", "-" * 72, "  TOTAL PIPELINE (GLOBAL)", "-" * 72, f"  Wall-clock time:    {total_time:.3f} s", f"  Measured phases:    {measured_total:.3f} s", f"  Overhead (loop):    {overhead:.3f} s ({_fmt_pct(overhead, total_time)})", f"  Effective FPS:      {global_fps:.1f}", f"  Avg frame time:     {_fmt_ms(total_time / global_n)} ms", "", "-" * 72, "  TIME BREAKDOWN BY PHASE", "-" * 72, f"  {'Phase':<24s} {'Total (s)':>10s} {'% of total':>10s} {'Avg (ms)':>10s} {'Min (ms)':>10s} {'Max (ms)':>10s}", "  " + "-" * 68]
         
-        phases = {"Frame Read (I/O)": global_read_times, "Detection (GPU)": global_det_times, "Tracker (CPU)": global_trk_times, "Drawing (CPU)": global_draw_times, "Frame Write (I/O)": global_write_times}
+        phases = {"Frame Read (I/O)": global_read_times, "Detection (GPU)": global_det_times, "Tracker (CPU)": global_trk_times, "Drawing (CPU)": global_draw_times}
+        if OUTPUT_MODE in ("save", "both"): phases["Frame Write (I/O)"] = global_write_times
+        if OUTPUT_MODE in ("show", "both"): phases["Frame Show (I/O)"] = global_show_times
         for name, arr in phases.items():
             t_tot = sum(arr); t_avg = t_tot / global_n; t_min = min(arr) if arr else 0; t_max = max(arr) if arr else 0
             txt.append(f"  {name:<24s} {t_tot:>10.3f} {_fmt_pct(t_tot, total_time):>10s} {_fmt_ms(t_avg):>10s} {_fmt_ms(t_min):>10s} {_fmt_ms(t_max):>10s}")
@@ -1164,7 +1255,9 @@ def _generate_global_reports(results: list, output_dir: str):
         if not bs or bs.n == 0: continue
         bench_lines.extend([f"\n### {r['video_stem']}", "| Фаза | Загальний час (с) | % від загального | Середній (ms) | Мін (ms) | Макс (ms) |", "|---|---|---|---|---|---|"])
         measured_total = sum(bs.frame_read_times) + sum(bs.detection_times) + sum(bs.tracker_update_times) + sum(bs.drawing_times) + sum(bs.frame_write_times)
-        phases = {"Frame Read (I/O)": bs.frame_read_times, "Detection (GPU)": bs.detection_times, "Tracker (CPU)": bs.tracker_update_times, "Drawing (CPU)": bs.drawing_times, "Frame Write (I/O)": bs.frame_write_times}
+        phases = {"Frame Read (I/O)": bs.frame_read_times, "Detection (GPU)": bs.detection_times, "Tracker (CPU)": bs.tracker_update_times, "Drawing (CPU)": bs.drawing_times}
+        if OUTPUT_MODE in ("save", "both"): phases["Frame Write (I/O)"] = bs.frame_write_times
+        if OUTPUT_MODE in ("show", "both"): phases["Frame Show (I/O)"] = bs.frame_show_times
         for name, arr in phases.items():
             t_tot = sum(arr); pct = t_tot / measured_total * 100 if measured_total > 0 else 0; t_avg = t_tot / bs.n * 1000; t_min = min(arr) * 1000 if arr else 0; t_max = max(arr) * 1000 if arr else 0
             bench_lines.append(f"| {name} | {t_tot:.3f} | {pct:.1f}% | {t_avg:.1f} | {t_min:.1f} | {t_max:.1f} |")

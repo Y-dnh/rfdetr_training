@@ -10,7 +10,9 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy
 from logging import getLogger
-from typing import List, Union
+from pathlib import Path
+from types import SimpleNamespace
+from typing import List, Optional, Union
 
 import numpy as np
 import supervision as sv
@@ -128,11 +130,53 @@ class RFDETR:
 
     def export(self, **kwargs):
         """
-        Export your model to an ONNX file.
+        Export your model to an ONNX or OpenVINO artifact.
 
         See [the ONNX export documentation](https://rfdetr.roboflow.com/learn/export/) for more information.
         """
-        self.model.export(**kwargs)
+        return self.model.export(**kwargs)
+
+    @classmethod
+    def from_openvino(
+        cls,
+        model_path: Union[str, Path],
+        metadata_path: Optional[Union[str, Path]] = None,
+        device: str = "CPU",
+    ) -> "RFDETR":
+        """Create an inference-only RF-DETR instance backed by OpenVINO IR."""
+        from rfdetr.deploy.openvino import (
+            OpenVINOInferenceModel,
+            infer_metadata_path,
+            load_openvino_metadata,
+            resolve_openvino_model_path,
+        )
+        from rfdetr.models import PostProcess
+
+        resolved_model_path = resolve_openvino_model_path(model_path)
+        resolved_metadata_path = Path(metadata_path).expanduser().resolve() if metadata_path else infer_metadata_path(resolved_model_path)
+        metadata = load_openvino_metadata(resolved_metadata_path)
+
+        instance = cls.__new__(cls)
+        instance.model_config = None
+        instance.callbacks = defaultdict(list)
+        instance.model = SimpleNamespace()
+        instance.model.model = None
+        instance.model.inference_model = OpenVINOInferenceModel(
+            model_path=resolved_model_path,
+            device=device,
+            metadata=metadata,
+        )
+        instance.model.postprocess = PostProcess(num_select=metadata.num_select)
+        instance.model.class_names = list(metadata.class_names)
+        instance.model.resolution = metadata.resolution
+        instance.model.device = torch.device("cpu")
+        instance._is_optimized_for_inference = True
+        instance._has_warned_about_not_being_optimized_for_inference = False
+        instance._optimized_has_been_compiled = True
+        instance._optimized_batch_size = metadata.batch_size
+        instance._optimized_resolution = metadata.resolution
+        instance._optimized_dtype = torch.float32
+        return instance
 
     @staticmethod
     def _load_classes(dataset_dir) -> List[str]:
@@ -367,7 +411,8 @@ class RFDETR:
                 if len(predictions) == 3:
                     return_predictions["pred_masks"] = predictions[2]
                 predictions = return_predictions
-            target_sizes = torch.tensor(orig_sizes, device=self.model.device)
+            target_device = predictions["pred_boxes"].device
+            target_sizes = torch.tensor(orig_sizes, device=target_device)
             results = self.model.postprocess(predictions, target_sizes=target_sizes)
 
         detections_list = []
