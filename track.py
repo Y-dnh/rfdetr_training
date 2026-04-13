@@ -791,7 +791,7 @@ class BenchmarkStats:
         return len(self.frame_read_times)
 
 
-def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, video_path: str, device_name: str, gpu_name: str, width: int, height: int, fps_video: float, total_frames: int, cfg: dict, has_tracker: bool) -> str:
+def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, video_path: str, device_name: str, gpu_name: str, width: int, height: int, fps_video: float, total_frames: int, cfg: dict, has_tracker: bool, bitrate_kbps: float = 0, duration_sec: float = 0) -> str:
     n = stats.n
     if n == 0: return "No frames processed.\n"
     phases = {"Frame Read (I/O)": stats.frame_read_times, "Detection (GPU)": stats.detection_times, "Tracker (CPU)": stats.tracker_update_times, "Drawing (CPU)": stats.drawing_times, "Frame Write (I/O)": stats.frame_write_times}
@@ -810,6 +810,8 @@ def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, vi
         f"  GPU:              {gpu_name}",
         f"  Video:            {video_path}",
         f"  Resolution:       {width}x{height} @ {fps_video:.1f} FPS",
+        f"  Duration:         {duration_sec:.1f} s",
+        f"  Bitrate:          {bitrate_kbps:.0f} kbps",
         f"  Frames processed: {n} / {total_frames}",
         f"  Detection every:  {DETECTION_INTERVAL} frames",
         f"  Tracker:          {'NanoTrack v' + NANOTRACK_VERSION if has_tracker else 'None'}",
@@ -823,6 +825,16 @@ def _generate_benchmark_report(stats, pipeline_total: float, model_path: str, vi
     lines.extend(["", "  Inference config:"])
     for k in ["imgsz", "conf", "iou", "half", "max_det", "device"]:
         if k in cfg: lines.append(f"    {k:16s} = {cfg[k]}")
+    lines.extend(["", "  Tracking config:",
+        f"    detection_interval = {DETECTION_INTERVAL}",
+        f"    max_age            = {MAX_AGE}",
+        f"    min_hits           = {MIN_HITS}",
+        f"    iou_threshold      = {IOU_THRESHOLD}",
+        f"    confirm_threshold  = {CONFIRM_THRESHOLD}",
+        f"    nanotrack_version  = {NANOTRACK_VERSION}",
+        f"    optical_flow       = {USE_OPTICAL_FLOW_PREDICT}",
+        f"    reid               = {ENABLE_REID}",
+    ])
     lines.extend([
         "", "-" * 72, "  TOTAL PIPELINE", "-" * 72,
         f"  Wall-clock time:    {pipeline_total:.3f} s",
@@ -910,6 +922,14 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)); height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)); total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    duration_sec = total_frames / fps if fps > 0 else 0
+    bitrate_kbps = 0
+    try:
+        file_size_bytes = os.path.getsize(video_input_path)
+        if duration_sec > 0:
+            bitrate_kbps = round(file_size_bytes * 8 / duration_sec / 1000, 1)
+    except Exception:
+        pass
 
     if USE_SAHI:
         slices = _sahi_generate_slices(width, height, SAHI_SLICE_WIDTH, SAHI_SLICE_HEIGHT, SAHI_OVERLAP_WIDTH_RATIO, SAHI_OVERLAP_HEIGHT_RATIO)
@@ -1010,6 +1030,26 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
     coco_path = os.path.join(output_dir, f"{video_stem}_annotations_coco.json")
     with open(coco_path, "w", encoding="utf-8") as f:
         json.dump(coco_data, f, ensure_ascii=False, indent=2)
+        
+    if benchmark_stats is not None:
+        report_txt = _generate_benchmark_report(
+            stats=benchmark_stats,
+            pipeline_total=elapsed_sec,
+            model_path=model_path,
+            video_path=video_input_path,
+            device_name=device_name,
+            gpu_name=gpu_name,
+            width=width,
+            height=height,
+            fps_video=fps,
+            total_frames=frame_counter,
+            cfg=cfg,
+            has_tracker=tracker is not None,
+            bitrate_kbps=bitrate_kbps,
+            duration_sec=duration_sec,
+        )
+        with open(benchmark_log_path, "w", encoding="utf-8") as f:
+            f.write(report_txt)
     
     return {
         "output_path": output_path if writer else None,
@@ -1021,7 +1061,37 @@ def run_tracking(video_input_path: str, model_path: str = MODEL_PATH, detection_
         "total_tracks": len(track_frames),
         "track_frames": track_frames,
         "frames_processed": frame_counter,
-        "fps_processed": fps_processed
+        "fps_processed": fps_processed,
+        "video_info": {
+            "width": width,
+            "height": height,
+            "fps": round(fps, 2),
+            "total_frames": total_frames,
+            "duration_sec": round(duration_sec, 2),
+            "bitrate_kbps": bitrate_kbps,
+        },
+        "detection_config": {
+            "imgsz": imgsz,
+            **INFERENCE_CONFIG,
+        },
+        "tracking_config": {
+            "detection_interval": detection_interval,
+            "max_age": MAX_AGE,
+            "min_hits": MIN_HITS,
+            "iou_threshold": IOU_THRESHOLD,
+            "confirm_threshold": CONFIRM_THRESHOLD,
+            "min_sec_stable": MIN_SEC_STABLE,
+            "nanotrack_version": NANOTRACK_VERSION,
+            "use_optical_flow": USE_OPTICAL_FLOW_PREDICT,
+            "enable_reid": ENABLE_REID,
+        },
+        "sahi_config": {
+            "use": USE_SAHI,
+            "slice_width": SAHI_SLICE_WIDTH if USE_SAHI else None,
+            "slice_height": SAHI_SLICE_HEIGHT if USE_SAHI else None,
+            "overlap_w": SAHI_OVERLAP_WIDTH_RATIO if USE_SAHI else None,
+            "overlap_h": SAHI_OVERLAP_HEIGHT_RATIO if USE_SAHI else None,
+        },
     }
 
 def _generate_global_reports(results: list, output_dir: str):
