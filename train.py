@@ -38,6 +38,10 @@ DATASET_DIR = Path(DATASET_ROOT)
 
 # Модель
 PRETRAINED_WEIGHTS = None  # Шлях до ваг або None для завантаження з HuggingFace
+# Для продовження після збою використовуй саме RESUME_CHECKPOINT, а не PRETRAINED_WEIGHTS.
+# last.pt відновлює model + optimizer + scheduler + номер епохи.
+# best.pt підходить для оцінки/експорту або нового fine-tune, але не є останнім станом тренування.
+RESUME_CHECKPOINT = None  # Напр.: "runs/rfdetr_medium/baseline/weights/last.pt"
 
 
 # =============================================================================
@@ -65,7 +69,7 @@ TRAINING_CONFIG = TrainingConfig(
     # -------------------------------------------------------------------------
     project=str(PROJECT_DIR),        # runs/.../ → зберігається в PROJECT_DIR/<name>/
     name="baseline",                 # Назва експерименту: runs/.../baseline/
-    exist_ok=False,                  # [True/False] True=перезаписати існуючий run
+    exist_ok=False,                  # Для нового запуску False створить baseline1/2; при resume trainer сам пише в папку checkpoint.
     
     # -------------------------------------------------------------------------
     # Основні параметри навчання
@@ -95,6 +99,7 @@ TRAINING_CONFIG = TrainingConfig(
     # Валідація та збереження
     # -------------------------------------------------------------------------
     val_period=1,                    # [≥1] Валідація кожні N епох | Рекомендовано: 1–5
+    resume=RESUME_CHECKPOINT,        # Продовження після збою: вкажи шлях до weights/last.pt.
     save_period=-1,                  # [≥1 або -1] Checkpoint кожні N епох | -1=тільки best/last
     early_stopping=30,               # [≥0] Зупинка якщо mAP не росте N епох | 0=вимкнено | Рекомендовано: 10–50
     

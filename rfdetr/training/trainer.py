@@ -122,6 +122,9 @@ class RFDETRTrainer:
         self.best_map = 0.0
         self.class_names = []
         self._epochs_without_improvement = 0  # для early stopping
+        self.is_resume = False
+        self.resume_checkpoint_path: Optional[Path] = None
+        self._time_offset_sec = 0.0
         
         # Metrics storage for curves
         self.all_predictions = []
@@ -153,10 +156,17 @@ class RFDETRTrainer:
 
         warnings.showwarning = _showwarning
     
-    def _setup_output_dir(self) -> Path:
-        """Set up output directory: project/<name>/ (e.g. runs/yolov8s/baseline/) — Ultralytics-style."""
+    def _setup_output_dir(self, resume_path: Optional[Path] = None) -> Path:
+        """Set up output directory: project/<name>/ or the checkpoint run dir on resume."""
         cfg = self.training_config
         base_dir = Path(cfg.project)
+
+        if resume_path is not None:
+            checkpoint_dir = resume_path.parent
+            save_dir = checkpoint_dir.parent if checkpoint_dir.name == "weights" else checkpoint_dir
+            save_dir.mkdir(parents=True, exist_ok=True)
+            (save_dir / 'weights').mkdir(exist_ok=True)
+            return save_dir
         
         if cfg.exist_ok:
             save_dir = base_dir / cfg.name
@@ -217,6 +227,27 @@ class RFDETRTrainer:
         with open(path, 'a', newline='', encoding='utf-8') as f:
             f.write(','.join(row) + '\n')
             f.flush()
+
+    def _read_results_time_offset(self, csv_path: Union[str, Path]) -> float:
+        """Return the last cumulative time value from results.csv for resume runs."""
+        import csv
+
+        try:
+            with open(csv_path, newline='', encoding='utf-8') as f:
+                rows = list(csv.DictReader(f))
+        except Exception as e:
+            self.training_logger.warning(f"Failed to read previous results.csv time offset: {e}")
+            return 0.0
+
+        for row in reversed(rows):
+            value = (row.get('time') or '').strip()
+            if not value:
+                continue
+            try:
+                return float(value)
+            except ValueError:
+                continue
+        return 0.0
 
     def _setup_model_and_criterion(self, num_classes: int):
         """Build model, criterion and postprocessor using RF-DETR components."""
@@ -426,9 +457,16 @@ class RFDETRTrainer:
     ) -> Dict[str, Any]:
         """Start training with custom train loop and YOLO-style visualizations."""
         from torch.amp import GradScaler
+
+        resume_path_raw = resume or (self.training_config.resume or None)
+        resume_path = Path(resume_path_raw).expanduser().resolve() if resume_path_raw else None
+        if resume_path is not None and not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        self.is_resume = resume_path is not None
+        self.resume_checkpoint_path = resume_path
         
         # Setup output directory
-        self.save_dir = self._setup_output_dir()
+        self.save_dir = self._setup_output_dir(resume_path)
         
         # Setup loggers
         self.training_logger = TrainingLogger(self.save_dir)
@@ -442,6 +480,8 @@ class RFDETRTrainer:
         self.training_logger.info(f"Starting training in {self.save_dir}")
         self.training_logger.info(f"Seed: {self.seed}")
         self.training_logger.info(f"Batch size: {self.training_config.batch_size}, Grid size: {self.grid_size}x{self.grid_size}")
+        if self.is_resume:
+            self.training_logger.info(f"Resume requested from checkpoint: {self.resume_checkpoint_path}")
         
         # Get model resolution and sync with augmentation config
         model_resolution = self._get_model_resolution()
@@ -458,7 +498,7 @@ class RFDETRTrainer:
         self.training_logger.info("  Color/flip/geometry/erasing: ALBUMENTATION_CONFIG (albumentations)")
         
         # Save configs
-        self._save_configs()
+        self._save_configs(is_resume=self.is_resume)
         
         # Setup dataloaders with YOLO-style augmentations
         self.training_logger.info("Loading datasets with augmentations...")
@@ -475,20 +515,25 @@ class RFDETRTrainer:
         )
         self.confusion_matrix = ConfusionMatrix(num_classes, self.class_names)
         
-        # Create labels.jpg
-        self.training_logger.info("Creating labels visualization...")
-        labels_max_images = (
-            None
-            if self.training_config.labels_max_images == 0
-            else self.training_config.labels_max_images
-        )
-        create_labels_visualization(
-            self.train_dataset,
-            self.save_dir / 'labels.jpg',
-            max_images=labels_max_images,
-            class_names=self.class_names,
-            random_seed=self.seed,
-        )
+        # Create labels.jpg once per run. On resume, reuse the existing analysis
+        # because the dataset labels do not change between interrupted sessions.
+        labels_path = self.save_dir / 'labels.jpg'
+        if self.is_resume and labels_path.exists():
+            self.training_logger.info(f"Skipping labels visualization on resume: {labels_path}")
+        else:
+            self.training_logger.info("Creating labels visualization...")
+            labels_max_images = (
+                None
+                if self.training_config.labels_max_images == 0
+                else self.training_config.labels_max_images
+            )
+            create_labels_visualization(
+                self.train_dataset,
+                labels_path,
+                max_images=labels_max_images,
+                class_names=self.class_names,
+                random_seed=self.seed,
+            )
         
         # Setup model and criterion
         self.training_logger.info("Building model...")
@@ -505,18 +550,21 @@ class RFDETRTrainer:
         self.scheduler = self._setup_scheduler(self.optimizer, num_training_steps)
         self.scaler = GradScaler('cuda', enabled=False)
         
-        # Resume if specified (аргумент або training_config.resume)
-        resume_path = resume or (self.training_config.resume or None)
         if resume_path:
             self._load_checkpoint(resume_path)
             results_csv = self.save_dir / 'results.csv'
             if results_csv.exists():
                 self.metrics_logger.load_from_csv(results_csv)
+                self._time_offset_sec = self._read_results_time_offset(results_csv)
 
         self._init_results_csv()
 
-        # Save first training batches visualization (with augmentations visible)
-        self._save_train_batches_with_aug()
+        # Save first training batches visualization (with augmentations visible).
+        # On resume, keep the original first-batch artifacts if they already exist.
+        if self.is_resume and (self.save_dir / 'train_batch0.jpg').exists():
+            self.training_logger.info("Skipping first train-batch visualization on resume: train_batch0.jpg already exists")
+        else:
+            self._save_train_batches_with_aug()
 
         # Training loop
         self.training_logger.info("Starting training loop...")
@@ -561,7 +609,7 @@ class RFDETRTrainer:
                 self._log_epoch_summary(epoch, all_metrics, epoch_time)
 
                 self._append_results_csv_row(
-                    epoch + 1, time.time() - start_time, all_metrics
+                    epoch + 1, self._time_offset_sec + time.time() - start_time, all_metrics
                 )
 
                 # Early stopping (тільки якщо була валідація і є mAP50)
@@ -586,7 +634,7 @@ class RFDETRTrainer:
         self.training_logger.info(f"Training completed in {datetime.timedelta(seconds=int(total_time))}")
         
         # Save augmentation log
-        self._save_augmentation_log()
+        self._save_augmentation_log(append=self.is_resume)
         
         # Generate final visualizations
         self._generate_final_visualizations()
@@ -614,6 +662,7 @@ class RFDETRTrainer:
         """Train for one epoch."""
         self.model.train()
         self.criterion.train()
+        self.aug_logger.set_epoch(epoch + 1)
         
         total_loss = 0.0
         total_loss_ce = 0.0
@@ -1286,9 +1335,17 @@ class RFDETRTrainer:
                 'labels': gt_labels,
             })
     
-    def _save_augmentation_log(self) -> None:
+    def _save_augmentation_log(self, append: bool = False) -> None:
         """Save augmentation log to JSON file."""
         try:
+            if append:
+                aug_log_path = self.save_dir / 'augmentation_log.json'
+                if aug_log_path.exists():
+                    with open(aug_log_path, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    existing_entries = existing.get('entries', [])
+                    if existing_entries:
+                        self.aug_logger.entries = existing_entries + self.aug_logger.entries
             self.aug_logger.save()
             self.training_logger.info(f"Augmentation log saved to {self.save_dir / 'augmentation_log.json'}")
         except Exception as e:
@@ -1457,21 +1514,23 @@ class RFDETRTrainer:
     
     def _save_checkpoint(self, epoch: int, metrics: Dict[str, float]) -> None:
         """Save training checkpoint (last.pt завжди; best.pt при покращенні mAP50; epoch_N.pt кожні save_period епох)."""
+        current_map = metrics.get('metrics/mAP50', 0.0)
+        best_map_after_epoch = max(self.best_map, current_map)
         checkpoint = {
             'epoch': epoch,
             'model': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'lr_scheduler': self.scheduler.state_dict() if self.scheduler else None,
             'metrics': metrics,
-            'best_map': self.best_map,
+            'best_map': best_map_after_epoch,
             'class_names': self.class_names,
         }
         
         torch.save(checkpoint, self.save_dir / 'weights' / 'last.pt')
         
-        current_map = metrics.get('metrics/mAP50', 0.0)
         if current_map > self.best_map:
             self.best_map = current_map
+            checkpoint['best_map'] = self.best_map
             torch.save(checkpoint, self.save_dir / 'weights' / 'best.pt')
             self.training_logger.debug(f"New best mAP: {self.best_map:.4f}")
         
@@ -1485,6 +1544,8 @@ class RFDETRTrainer:
         
         self.current_epoch = checkpoint['epoch'] + 1
         self.best_map = checkpoint.get('best_map', 0.0)
+        completed_epoch = checkpoint['epoch'] + 1
+        next_epoch = self.current_epoch + 1
         
         # Load model weights (support both 'model' and 'model_state_dict')
         if checkpoint.get('model'):
@@ -1506,9 +1567,12 @@ class RFDETRTrainer:
             elif checkpoint.get('scheduler_state_dict'):
                 self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         
-        self.training_logger.info(f"Resumed from epoch {self.current_epoch}")
+        self.training_logger.info(
+            f"Resumed checkpoint after epoch {completed_epoch}; "
+            f"next epoch shown in console will be {next_epoch}/{self.training_config.epochs}"
+        )
     
-    def _save_configs(self) -> None:
+    def _save_configs(self, is_resume: bool = False) -> None:
         """Save configuration files."""
         augmentation_config = self.augmentation_config.to_dict()
         albumentation_transforms = getattr(self.augmentation_config, "albumentation_transforms", None)
@@ -1525,7 +1589,13 @@ class RFDETRTrainer:
             'seed': self.seed,
         }
         
-        with open(self.save_dir / 'config.json', 'w') as f:
+        config_path = self.save_dir / 'config.json'
+        if is_resume and config_path.exists():
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            config_path = self.save_dir / f'config_resume_{timestamp}.json'
+            self.training_logger.info(f"Preserving existing config.json; writing resume config to {config_path.name}")
+
+        with open(config_path, 'w') as f:
             json.dump(configs, f, indent=2, ensure_ascii=False)
 
     @staticmethod
