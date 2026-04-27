@@ -775,10 +775,12 @@ class RFDETRTrainer:
         base_ds = get_coco_api_from_dataset(self.val_dataset)
         coco_evaluator = CocoEvaluator(base_ds, ['bbox'])
         
-        # Save preview batches using a random subset of validation batches so the
-        # visualization is not dominated by neighboring frames from the same scene.
+        # Save validation preview batches only for the first and final epoch.
+        # Otherwise val_period=1 would save vis_batches new random previews every
+        # epoch and gradually fill the run directory with val_batch*.jpg files.
         saved_batches = 0
-        max_batches_to_save = self.training_config.vis_batches
+        should_save_val_preview = epoch == 0 or save_last
+        max_batches_to_save = self.training_config.vis_batches if should_save_val_preview else 0
         num_preview_batches = min(max_batches_to_save, num_batches)
         preview_batch_indices: set[int] = set()
         if num_preview_batches > 0:
